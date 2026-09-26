@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { createAppClient, viemConnector } from "@farcaster/auth-client";
-import { zeroAddress, type Address, type Hex } from "viem";
-import { useAccount, useReadContract, useSignMessage } from "wagmi";
+import { isHex, zeroAddress, type Address, type Hex } from "viem";
+import { useAccount, useBlock, useReadContract, useSignMessage } from "wagmi";
 import { identityAttestorAbi } from "./abi/IdentityAttestor";
 import { api, type Attestation, type Identity, type PlatformInfo } from "./attestationApi";
 import type { Deployment } from "./deployments";
@@ -167,7 +167,53 @@ export function VerifyIdentity({ d, resume }: { d: Deployment; resume?: { sessio
 
       {step.kind === "submitted" && <Result d={d} attestation={step.attestation} identity={step.identity} />}
       <TxNotice status={tx.status} />
+      <PendingRotation d={d} initialId={step.kind === "submitted" && step.attestation.mode === "initiateRotation" ? step.attestation.creatorId : undefined} />
     </section>
+  );
+}
+
+/** Finish a wallet change once its 7-day delay has passed (anyone may call completeRotation). */
+function PendingRotation({ d, initialId }: { d: Deployment; initialId?: Hex }) {
+  const tx = useTx();
+  const [input, setInput] = useState<string>(initialId ?? "");
+  useEffect(() => { if (initialId) setInput(initialId); }, [initialId]);
+  const id = isHex(input) && input.length === 66 ? (input as Hex) : undefined;
+  const { data: block } = useBlock({ watch: true });
+  const { data: rec } = useReadContract({
+    address: d.attestor, abi: identityAttestorAbi, functionName: "attestations",
+    args: id ? [id] : undefined, query: { enabled: !!id },
+  });
+  const pending = rec?.[1];
+  const activatesAt = rec ? BigInt(rec[2]) : undefined;
+  const hasPending = !!pending && pending !== zeroAddress;
+  const ready = hasPending && activatesAt !== undefined && block !== undefined && block.timestamp >= activatesAt;
+
+  return (
+    <div className="subsection">
+      <h3>Finaliser un changement de wallet</h3>
+      <label>
+        creatorId
+        <input value={input} onChange={(e) => setInput(e.target.value.trim())} placeholder="0x… (64 caractères hexadécimaux)" />
+      </label>
+      {id && rec && !hasPending && <p className="muted">Aucun changement de wallet en attente pour cette identité.</p>}
+      {hasPending && (
+        <p className="muted">
+          {short(pending)} remplacera {short(rec?.[0])}
+          {ready ? " : le délai est écoulé." : ` à partir du ${new Date(Number(activatesAt) * 1000).toLocaleString("fr-FR")}.`}
+        </p>
+      )}
+      {hasPending && (
+        <button
+          disabled={!ready || tx.busy}
+          onClick={() => tx.send("Finaliser le changement de wallet", {
+            address: d.attestor, abi: identityAttestorAbi, functionName: "completeRotation", args: [id!],
+          })}
+        >
+          Finaliser le changement de wallet
+        </button>
+      )}
+      <TxNotice status={tx.status} />
+    </div>
   );
 }
 

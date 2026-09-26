@@ -46,6 +46,7 @@ export function RegisterToken({ d, onRegistered }: { d: Deployment; onRegistered
   const [fallback, setFallback] = useState<string>(d.fallback ?? "");
   const [launchpadId, setLaunchpadId] = useState("");
   const [rows, setRows] = useState<Row[]>([{ recipient: "", percent: "100" }]);
+  const [lockAck, setLockAck] = useState(false);
 
   const tokenOk = isAddress(token);
   const { data: predicted } = useReadContract({
@@ -127,14 +128,21 @@ export function RegisterToken({ d, onRegistered }: { d: Deployment; onRegistered
           {lockerReady ? (
             <p className="notice ok" role="status">Transfert du verrou en attente d'acceptation par le vault.</p>
           ) : sameAddress(me, lockerOwner) ? (
+            <>
+            <label className="ack">
+              <input type="checkbox" checked={lockAck} onChange={(e) => setLockAck(e.target.checked)} />
+              Je comprends que la liquidité de ce token restera verrouillée définitivement dans le
+              vault Nod : ni moi ni personne ne pourra plus la retirer ni récupérer le verrou.
+            </label>
             <button
-              disabled={tx.busy}
+              disabled={tx.busy || !lockAck}
               onClick={() => tx.send("Transférer le verrou", {
                 address: locker, abi: lockerAbi, functionName: "transferOwnership", args: [predictedVault],
               })}
             >
               Transférer le verrou au vault
             </button>
+            </>
           ) : (
             <p className="notice err">Seul le propriétaire du verrou ({short(lockerOwner)}) peut le transférer.</p>
           )}

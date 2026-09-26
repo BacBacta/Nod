@@ -22,7 +22,11 @@ test("creator hands the Bullcheese locker to Nod, registers, then collects the f
 
   // Registration is blocked until the locker is handed to the predicted vault.
   await expect(page.getByText("Transférez d'abord le verrou")).toBeVisible();
-  await page.getByRole("button", { name: "Transférer le verrou au vault" }).click();
+  // The transfer is irreversible: it stays disabled until the creator acknowledges it.
+  const transfer = page.getByRole("button", { name: "Transférer le verrou au vault" });
+  await expect(transfer).toBeDisabled();
+  await page.getByLabel(/restera verrouillée définitivement/).check();
+  await transfer.click();
   await confirm(page, "Transférer le verrou");
   await expect(page.getByText("Transfert du verrou en attente d'acceptation par le vault.")).toBeVisible();
 

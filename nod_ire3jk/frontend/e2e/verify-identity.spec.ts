@@ -32,4 +32,18 @@ test("an identity that already has a wallet goes through the 7-day rotation", as
   await verifyWith(page, "X", "12345");
   const status = page.getByRole("status").filter({ hasText: "Changement de wallet demandé" });
   await expect(status).toContainText("0x3C44…93BC remplacera 0x7099…79C8", { timeout: 30_000 });
+
+  // Too early: the button stays disabled until the 7-day delay has passed.
+  const finish = page.getByRole("button", { name: "Finaliser le changement de wallet" });
+  await expect(finish).toBeDisabled();
+  for (const method of ["evm_increaseTime", "evm_mine"]) {
+    await fetch("http://127.0.0.1:8545", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: method === "evm_mine" ? [] : [7 * 86_400 + 1] }),
+    });
+  }
+  await expect(finish).toBeEnabled({ timeout: 30_000 });
+  await finish.click();
+  await expect(page.getByRole("status").filter({ hasText: "Finaliser le changement de wallet : confirmé" })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("Aucun changement de wallet en attente pour cette identité.")).toBeVisible();
 });
