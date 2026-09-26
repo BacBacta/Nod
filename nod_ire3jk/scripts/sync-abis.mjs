@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const out = join(root, "contracts/out");
 const dest = join(root, "frontend/src/abi");
-const contracts = ["Registry", "PayoutRouter", "IdentityAttestor", "FeeVaultFactory", "FeeVault"];
+const contracts = ["Registry", "PayoutRouter", "IdentityAttestor", "FeeVaultFactory", "FeeVault", "ILaunchpadAdapter"];
 
 mkdirSync(dest, { recursive: true });
 for (const name of contracts) {

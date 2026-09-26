@@ -4,25 +4,34 @@ pragma solidity ^0.8.24;
 /**
  * @title  ILaunchpadAdapter
  * @notice Adapter interface that each supported launchpad must implement.
- *         The Registry calls `verifyFeeRecipient` during token registration to confirm
- *         that (a) the token's fee-recipient address is already set to the provided vault
- *         AND (b) the launchpad does not allow the fee recipient to be changed after the
- *         fact.  Both conditions must hold for the function to return true.
  *
- * @dev    Implementations MUST be view functions — no state changes, no ETH sent.
- *         The Registry whitelists adapter addresses before any call is made, so only
- *         admin-approved implementations can be used.
+ *         Two fee models are supported:
+ *         - Push: the launchpad sends fees to a fee-recipient address fixed at launch.
+ *           `feeSource` returns address(0) and `verifyFeeRecipient` checks that the
+ *           recipient is the vault and cannot change.
+ *         - Pull (e.g. Bullcheese): fees accrue to whoever owns a per-token contract
+ *           (an LP locker). The owner transfers it to the vault (two-step ownership);
+ *           at registration the Registry makes the vault accept it, then
+ *           `verifyFeeRecipient` checks that the vault is the owner.
+ *
+ * @dev    All functions MUST be views. The Registry only calls whitelisted adapters.
  */
 interface ILaunchpadAdapter {
     /**
-     * @notice Check that `token`'s fee recipient on this launchpad is `vault` and is
-     *         immutably locked to that address.
-     * @param  token  Address of the launched token.
-     * @param  vault  Address of the FeeVault that should be the fee recipient.
-     * @return true if and only if the fee recipient is `vault` and cannot be changed.
+     * @notice True iff `vault` receives `token`'s creator fees and that cannot be changed
+     *         by anyone else.
      */
-    function verifyFeeRecipient(address token, address vault)
-        external
-        view
-        returns (bool);
+    function verifyFeeRecipient(address token, address vault) external view returns (bool);
+
+    /**
+     * @notice Pull model: the Ownable2Step contract the vault must accept at registration
+     *         and later call `collectFees()` on. address(0) for push launchpads.
+     */
+    function feeSource(address token) external view returns (address);
+
+    /**
+     * @notice Uniswap v3 pool pairing `token` with USDC, used to convert fees paid in the
+     *         token into USDC. address(0) if fees are only ever paid in USDC.
+     */
+    function usdcPool(address token) external view returns (address);
 }

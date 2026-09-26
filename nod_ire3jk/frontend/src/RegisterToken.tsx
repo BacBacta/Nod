@@ -1,6 +1,8 @@
 import { useState } from "react";
-import { encodeAbiParameters, isAddress, isHex, keccak256, stringToBytes, type Address, type Hex } from "viem";
-import { useAccount, useReadContract } from "wagmi";
+import { encodeAbiParameters, isAddress, isHex, keccak256, stringToBytes, zeroAddress, type Address, type Hex } from "viem";
+import { useAccount, useReadContract, useReadContracts } from "wagmi";
+import { iLaunchpadAdapterAbi } from "./abi/ILaunchpadAdapter";
+import { sameAddress, short } from "./format";
 import { registryAbi } from "./abi/Registry";
 import { feeVaultFactoryAbi } from "./abi/FeeVaultFactory";
 import type { Deployment } from "./deployments";
@@ -8,6 +10,13 @@ import { TxNotice } from "./TxNotice";
 import { useTx } from "./useTx";
 
 type Row = { recipient: string; percent: string };
+
+/** Ownable2Step surface of a pull-model fee source (e.g. a Bullcheese LP locker). */
+const lockerAbi = [
+  { type: "function", name: "owner", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "pendingOwner", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "transferOwnership", stateMutability: "nonpayable", inputs: [{ name: "newOwner", type: "address" }], outputs: [] },
+] as const;
 
 const PLATFORMS = [
   ["x", "X"], ["farcaster", "Farcaster (FID)"], ["github", "GitHub"],
@@ -37,12 +46,30 @@ export function RegisterToken({ d, onRegistered }: { d: Deployment; onRegistered
   const [fallback, setFallback] = useState<string>(d.fallback ?? "");
   const [launchpadId, setLaunchpadId] = useState("");
   const [rows, setRows] = useState<Row[]>([{ recipient: "", percent: "100" }]);
+  const [lockAck, setLockAck] = useState(false);
 
   const tokenOk = isAddress(token);
   const { data: predicted } = useReadContract({
     address: d.factory, abi: feeVaultFactoryAbi, functionName: "predictVaultAddress",
     args: me && tokenOk ? [me, token] : undefined, query: { enabled: !!me && tokenOk },
   });
+
+  const predictedVault = predicted?.[0];
+  const { data: source } = useReadContract({
+    address: isAddress(adapter) ? adapter : undefined, abi: iLaunchpadAdapterAbi, functionName: "feeSource",
+    args: tokenOk ? [token] : undefined, query: { enabled: tokenOk && isAddress(adapter) },
+  });
+  const locker = source && source !== zeroAddress ? source : undefined;
+  const { data: lockerState } = useReadContracts({
+    contracts: locker ? [
+      { address: locker, abi: lockerAbi, functionName: "owner" },
+      { address: locker, abi: lockerAbi, functionName: "pendingOwner" },
+    ] : [],
+    query: { enabled: !!locker },
+  });
+  const lockerOwner = lockerState?.[0]?.result as Address | undefined;
+  const lockerPending = lockerState?.[1]?.result as Address | undefined;
+  const lockerReady = !locker || sameAddress(lockerPending, predictedVault);
 
   const bpsTotal = rows.reduce((s, r) => s + Math.round(Number(r.percent) * 100 || 0), 0);
   const problems = [
@@ -53,6 +80,7 @@ export function RegisterToken({ d, onRegistered }: { d: Deployment; onRegistered
     !isAddress(fallback) && "Adresse de repli invalide.",
     rows.some((r) => !isAddress(r.recipient)) && "Adresse de bénéficiaire invalide.",
     bpsTotal !== 10_000 && `Les parts totalisent ${bpsTotal / 100} % au lieu de 100 %.`,
+    !lockerReady && "Transférez d'abord le verrou de liquidité au vault prédit (étape ci-dessus).",
   ].filter(Boolean) as string[];
 
   const update = (i: number, patch: Partial<Row>) =>
@@ -83,6 +111,43 @@ export function RegisterToken({ d, onRegistered }: { d: Deployment; onRegistered
         <p className="hint">Vault prédit pour ce token : <span className="mono">{predicted[0]}</span></p>
       )}
       <label>Adaptateur du launchpad<input value={adapter} onChange={(e) => setAdapter(e.target.value.trim())} placeholder="0x…" /></label>
+      {(d.adapter || d.bullcheeseAdapter) && (
+        <div className="actions">
+          {d.adapter && <button className="secondary" onClick={() => setAdapter(d.adapter!)}>Launchpad classique</button>}
+          {d.bullcheeseAdapter && <button className="secondary" onClick={() => setAdapter(d.bullcheeseAdapter!)}>Bullcheese</button>}
+        </div>
+      )}
+      {locker && predictedVault && (
+        <div className="notice">
+          <p>
+            Ce launchpad verse les frais au propriétaire du verrou de liquidité{" "}
+            <span className="mono">{short(locker)}</span>. Transférez-le au vault prédit{" "}
+            <span className="mono">{short(predictedVault)}</span>, puis enregistrez depuis ce même
+            wallet : la liquidité restera verrouillée définitivement dans le vault.
+          </p>
+          {lockerReady ? (
+            <p className="notice ok" role="status">Transfert du verrou en attente d'acceptation par le vault.</p>
+          ) : sameAddress(me, lockerOwner) ? (
+            <>
+            <label className="ack">
+              <input type="checkbox" checked={lockAck} onChange={(e) => setLockAck(e.target.checked)} />
+              Je comprends que la liquidité de ce token restera verrouillée définitivement dans le
+              vault Nod : ni moi ni personne ne pourra plus la retirer ni récupérer le verrou.
+            </label>
+            <button
+              disabled={tx.busy || !lockAck}
+              onClick={() => tx.send("Transférer le verrou", {
+                address: locker, abi: lockerAbi, functionName: "transferOwnership", args: [predictedVault],
+              })}
+            >
+              Transférer le verrou au vault
+            </button>
+            </>
+          ) : (
+            <p className="notice err">Seul le propriétaire du verrou ({short(lockerOwner)}) peut le transférer.</p>
+          )}
+        </div>
+      )}
       <label>
         Plateforme du créateur
         <select value={platform} onChange={(e) => setPlatform(e.target.value)}>

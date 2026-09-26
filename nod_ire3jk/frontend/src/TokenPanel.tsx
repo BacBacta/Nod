@@ -1,4 +1,4 @@
-import { erc20Abi, type Address } from "viem";
+import { erc20Abi, formatUnits, zeroAddress, type Address } from "viem";
 import { useAccount, useBlock, useReadContract, useReadContracts } from "wagmi";
 import { registryAbi } from "./abi/Registry";
 import { payoutRouterAbi } from "./abi/PayoutRouter";
@@ -37,7 +37,7 @@ export function TokenPanel({ d, token }: { d: Deployment; token: Address }) {
       <h2>
         Token {short(token)} <span className={`badge s${state}`}>{STATES[state]}</span>
       </h2>
-      <TokenSummary d={d} vault={vault} creatorId={creatorId} deadline={deadline} />
+      <TokenSummary d={d} token={token} vault={vault} creatorId={creatorId} deadline={deadline} />
       <CreatorActions
         d={d} token={token} creatorId={creatorId} state={state}
         deadlinePassed={deadlinePassed} tx={tx} me={me}
@@ -59,6 +59,7 @@ export function TokenPanel({ d, token }: { d: Deployment; token: Address }) {
       </table>
       </div>
       <div className="actions">
+        <CollectButton d={d} token={token} vault={vault} tx={tx} />
         <button
           disabled={tx.busy || state === TokenState.PENDING}
           title={state === TokenState.PENDING ? "Les frais s'accumulent tant que le créateur n'a pas décidé" : ""}
@@ -74,8 +75,26 @@ export function TokenPanel({ d, token }: { d: Deployment; token: Address }) {
   );
 }
 
-function TokenSummary({ d, vault, creatorId, deadline }: {
-  d: Deployment; vault: Address; creatorId: `0x${string}`; deadline: number;
+/** Pull-model launchpads (Bullcheese): fees wait in the LP locker the vault owns. */
+function CollectButton({ d, token, vault, tx }: {
+  d: Deployment; token: Address; vault: Address; tx: ReturnType<typeof useTx>;
+}) {
+  const { data: source } = useReadContract({ address: vault, abi: feeVaultAbi, functionName: "feeSource" });
+  if (!source || source === zeroAddress) return null;
+  return (
+    <button
+      disabled={tx.busy}
+      onClick={() => tx.send("Collecter les frais du launchpad", {
+        address: d.registry, abi: registryAbi, functionName: "collectFees", args: [token],
+      })}
+    >
+      Collecter les frais du launchpad
+    </button>
+  );
+}
+
+function TokenSummary({ d, token, vault, creatorId, deadline }: {
+  d: Deployment; token: Address; vault: Address; creatorId: `0x${string}`; deadline: number;
 }) {
   const { data } = useReadContracts({
     contracts: [
@@ -83,15 +102,25 @@ function TokenSummary({ d, vault, creatorId, deadline }: {
       { address: vault, abi: feeVaultAbi, functionName: "availableBalance" },
       { address: vault, abi: feeVaultAbi, functionName: "depositCap" },
       { address: d.attestor, abi: identityAttestorAbi, functionName: "walletOf", args: [creatorId] },
+      { address: token, abi: erc20Abi, functionName: "balanceOf", args: [vault] },
+      { address: token, abi: erc20Abi, functionName: "symbol" },
+      { address: token, abi: erc20Abi, functionName: "decimals" },
     ],
   });
   const cap = data?.[2].result;
+  const tokenFees = data?.[4].result;
   return (
     <dl className="grid">
       <dt>Vault</dt><dd className="mono">{vault}</dd>
       <dt>Wallet du créateur</dt><dd className="mono">{data?.[3].result ?? "…"}</dd>
       <dt>USDC dans le vault</dt><dd>{usdc(data?.[0].result)}</dd>
       <dt>Non encore distribué</dt><dd>{usdc(data?.[1].result)}</dd>
+      {tokenFees !== undefined && tokenFees > 0n && (
+        <>
+          <dt>Frais en {data?.[5].result ?? "token"} à convertir</dt>
+          <dd>{Number(formatUnits(tokenFees, data?.[6].result ?? 18)).toLocaleString("fr-FR")}</dd>
+        </>
+      )}
       <dt>Plafond de dépôt</dt><dd>{cap === undefined ? "…" : cap === 0n ? "Aucun" : usdc(cap)}</dd>
       <dt>Date limite de décision</dt><dd>{new Date(deadline * 1000).toLocaleString("fr-FR")}</dd>
     </dl>

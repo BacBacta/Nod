@@ -6,10 +6,13 @@
       "name": "nod-protocol",
       "dependencies": {
         "@openzeppelin/contracts": "5.1.0",
+        "@uniswap/v4-core": "1.0.2",
       },
     },
   },
   "packages": {
     "@openzeppelin/contracts": ["@openzeppelin/contracts@5.1.0", "", {}, "sha512-p1ULhl7BXzjjbha5aqst+QMLY+4/LCWADXOCsmLHRM77AqiPjnd9vvUN9sosUfhL9JGKpZ0TjEGxgvnizmWGSA=="],
+
+    "@uniswap/v4-core": ["@uniswap/v4-core@1.0.2", "", {}, "sha512-X15Tm2wWd+USAzEExMbo+g9naA6QN6mPgWm0MzDwRNlOfaNlepfUpSyt9RSrUfEODspwbyWbcLg6t5nwc/e7lg=="],
   }
 }

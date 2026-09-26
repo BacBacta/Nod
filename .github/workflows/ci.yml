@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: nod_ire3jk
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: forge build --sizes
+      - run: forge test -vv
+
+  attestation-service:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: forge build
+      - name: Local chain for the on-chain test
+        run: |
+          anvil --chain-id 31337 --silent &
+          for i in $(seq 1 50); do cast chain-id --rpc-url http://127.0.0.1:8545 > /dev/null 2>&1 && break; sleep 0.2; done
+      - working-directory: nod_ire3jk/attestation-service
+        run: |
+          bun install --frozen-lockfile
+          bun run typecheck
+          NOD_ANVIL_RPC=http://127.0.0.1:8545 bun run test
+
+  keeper:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Local stack (anvil + contracts + demo tokens)
+        run: ./scripts/dev-local.sh
+      - working-directory: nod_ire3jk/keeper
+        run: |
+          bun install --frozen-lockfile
+          bun run typecheck
+          NOD_ANVIL_RPC=http://127.0.0.1:8545 bun run test
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - working-directory: nod_ire3jk/frontend
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Install app dependencies and Chromium
+        run: |
+          (cd frontend && bun install --frozen-lockfile && bunx playwright install --with-deps chromium)
+          (cd attestation-service && bun install --frozen-lockfile)
+      - name: Local stack, attestation service (simulated OAuth) and app
+        run: |
+          ./scripts/dev-local.sh
+          ./scripts/dev-attestation.sh > /tmp/attestation.log 2>&1 &
+          (cd frontend && bunx vite --port 5173 --strictPort > /tmp/vite.log 2>&1 &)
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:8787/v1/platforms > /dev/null && curl -sf http://localhost:5173 > /dev/null && exit 0
+            sleep 1
+          done
+          cat /tmp/attestation.log /tmp/vite.log
+          exit 1
+      - working-directory: nod_ire3jk/frontend
+        run: bun run test:e2e
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results
+          path: nod_ire3jk/frontend/test-results

@@ -1,0 +1,17 @@
+name: Setup Nod toolchain
+description: Bun, Foundry, root dependencies (OpenZeppelin, Uniswap v4-core) and forge-std.
+runs:
+  using: composite
+  steps:
+    - uses: oven-sh/setup-bun@v2
+    - uses: foundry-rs/foundry-toolchain@v1
+      with:
+        version: stable
+    - name: Root dependencies
+      shell: bash
+      working-directory: nod_ire3jk
+      run: bun install --frozen-lockfile
+    - name: forge-std (pinned in foundry.lock)
+      shell: bash
+      working-directory: nod_ire3jk
+      run: git clone --quiet --depth 1 --branch v1.16.2 https://github.com/foundry-rs/forge-std lib/forge-std

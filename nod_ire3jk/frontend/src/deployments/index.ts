@@ -13,6 +13,8 @@ export type Deployment = {
   fallback?: Address;
   demoToken?: Address;
   demoCreatorId?: Hex;
+  bullcheeseAdapter?: Address;
+  bullcheeseDemoToken?: Address;
 };
 
 // 31337.json is written by scripts/dev-local.sh; 5042002.json is filled in after

@@ -21,8 +21,10 @@ describe.skipIf(!rpc)("on-chain: IdentityAttestor accepts service attestations",
   );
   const abi = artifact.abi as Abi;
   const transport = http(rpc);
-  const pub = createPublicClient({ chain: anvil, transport });
-  const admin = createWalletClient({ chain: anvil, transport, account: privateKeyToAccount(ATTESTER_KEY) });
+  // viem polls receipts every 4s by default: keep the test fast on slow CI runners.
+  const pollingInterval = 100;
+  const pub = createPublicClient({ chain: anvil, transport, pollingInterval });
+  const admin = createWalletClient({ chain: anvil, transport, pollingInterval, account: privateKeyToAccount(ATTESTER_KEY) });
 
   async function deploy(): Promise<Address> {
     const hash = await admin.deployContract({
@@ -54,7 +56,7 @@ describe.skipIf(!rpc)("on-chain: IdentityAttestor accepts service attestations",
   }
 
   async function submit(attestor: Address, att: any, account: typeof USER) {
-    const user = createWalletClient({ chain: anvil, transport, account });
+    const user = createWalletClient({ chain: anvil, transport, pollingInterval, account });
     const hash = await user.writeContract({ address: attestor, abi, functionName: att.functionName, args: att.args });
     const receipt = await pub.waitForTransactionReceipt({ hash });
     expect(receipt.status).toBe("success");

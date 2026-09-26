@@ -54,6 +54,19 @@ export const feeVaultAbi = [
   },
   {
     "type": "function",
+    "name": "acceptFeeSource",
+    "inputs": [
+      {
+        "name": "source",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "availableBalance",
     "inputs": [],
     "outputs": [
@@ -83,6 +96,13 @@ export const feeVaultAbi = [
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "collectFromSource",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -118,6 +138,19 @@ export const feeVaultAbi = [
   {
     "type": "function",
     "name": "factory",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "feeSource",
     "inputs": [],
     "outputs": [
       {
@@ -198,6 +231,40 @@ export const feeVaultAbi = [
       }
     ],
     "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "swapTokenFees",
+    "inputs": [
+      {
+        "name": "router",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "fee",
+        "type": "uint24",
+        "internalType": "uint24"
+      },
+      {
+        "name": "amountIn",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "minUsdcOut",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "usdcOut",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
     "stateMutability": "nonpayable"
   },
   {
@@ -357,6 +424,19 @@ export const feeVaultAbi = [
   },
   {
     "type": "event",
+    "name": "FeeSourceAccepted",
+    "inputs": [
+      {
+        "name": "source",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "FundsTransferred",
     "inputs": [
       {
@@ -379,6 +459,30 @@ export const feeVaultAbi = [
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TokenFeesSwapped",
+    "inputs": [
+      {
+        "name": "tokenIn",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "usdcOut",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "FeeSourceAlreadySet",
+    "inputs": []
   },
   {
     "type": "error",
@@ -411,6 +515,11 @@ export const feeVaultAbi = [
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "NoFeeSource",
+    "inputs": []
   },
   {
     "type": "error",

@@ -11,6 +11,8 @@ import {FeeVault} from "./FeeVault.sol";
 import {FeeVaultFactory} from "./FeeVaultFactory.sol";
 import {IdentityAttestor} from "./IdentityAttestor.sol";
 import {ILaunchpadAdapter} from "./ILaunchpadAdapter.sol";
+import {IUniswapV3PoolMinimal} from "./external/IUniswapV3.sol";
+import {TwapQuote} from "./libraries/TwapQuote.sol";
 
 /**
  * @title  Registry
@@ -79,6 +81,10 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
     error NotRecipient(address token, address caller);
     error SplitIndexOutOfRange(uint8 index, uint8 length);
     error InsufficientClaimable(uint256 available, uint256 requested);
+    error NoUsdcPool(address token);
+    error SwapRouterNotSet();
+    error MinOutBelowTwap(uint256 minOut, uint256 floor);
+    error InvalidSwapAmount(uint256 amountIn);
 
     // ─── Events ──────────────────────────────────────────────────────────────────
 
@@ -106,6 +112,8 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
     event ClaimsPauseEnded();
     event VaultDepositCapUpdated(address indexed vault, uint256 newCap);
     event RedirectSet(address indexed token, uint8 splitIndex, address indexed redirectTo);
+    event SwapRouterUpdated(address oldRouter, address newRouter);
+    event TokenFeesSwapped(address indexed token, uint256 tokenIn, uint256 usdcOut, uint256 twapOut);
 
     // ─── Enums / Types ───────────────────────────────────────────────────────────
 
@@ -144,10 +152,16 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
     // ─── Roles ───────────────────────────────────────────────────────────────────
 
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
+    /// @notice May convert token-denominated fees to USDC (within the TWAP bound).
+    bytes32 public constant KEEPER_ROLE = keccak256("KEEPER_ROLE");
 
     // ─── Constants ───────────────────────────────────────────────────────────────
 
     uint16  public constant PROTOCOL_FEE_CAP       = 1500;  // 15% hard cap
+    /// @notice TWAP window used to bound token->USDC fee swaps.
+    uint32  public constant SWAP_TWAP_WINDOW       = 10 minutes;
+    /// @notice A swap must return at least TWAP value minus this (bps).
+    uint16  public constant MAX_SWAP_SLIPPAGE_BPS  = 300;   // 3%
     uint48  public constant REGISTRATION_DEADLINE  = 14 days;
     uint48  public constant REFUSED_LOCKOUT        = 30 days;
     uint48  public constant CLAIM_PAUSE_MAX        = 72 hours;
@@ -168,6 +182,9 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
 
     address public treasury;
     address public buybackModule;
+
+    /// @notice Uniswap SwapRouter02 used to convert token fees to USDC (0 = disabled). Via timelock.
+    address public swapRouter;
     address public timelock;
 
     uint16  public protocolFeeBps; // default 1000 (10%)
@@ -286,6 +303,11 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
 
         // Deploy vault via factory (uses msg.sender as the deployer key for salt)
         (address vault,) = factory.deployVault(msg.sender, token);
+
+        // Pull-model launchpads: the current owner of the fee source must already have
+        // started the two-step transfer to the (predicted) vault; the vault accepts here.
+        address source = ILaunchpadAdapter(adapter).feeSource(token);
+        if (source != address(0)) FeeVault(payable(vault)).acceptFeeSource(source);
 
         // Verify fee recipient on launchpad
         if (!ILaunchpadAdapter(adapter).verifyFeeRecipient(token, vault)) {
@@ -594,6 +616,72 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
      * @param token  The registered token.
      */
     function distributeIncoming(address token) external nonReentrant {
+        _distributeIncoming(token);
+    }
+
+    /**
+     * @notice Pull-model launchpads: collect the vault's share of fees from its fee
+     *         source (e.g. the Bullcheese LP locker), then distribute. Callable by anyone.
+     */
+    function collectFees(address token) external nonReentrant {
+        FeeVault(payable(_requireRecord(token).vault)).collectFromSource();
+        _distributeIncoming(token);
+    }
+
+    /**
+     * @notice Grow the token/USDC pool's price history so a TWAP over
+     *         SWAP_TWAP_WINDOW becomes available. Callable by anyone (caller pays gas).
+     */
+    function prepareSwapOracle(address token, uint16 cardinalityNext) external {
+        TokenRecord storage rec = _requireRecord(token);
+        address pool = ILaunchpadAdapter(rec.adapter).usdcPool(token);
+        if (pool == address(0)) revert NoUsdcPool(token);
+        IUniswapV3PoolMinimal(pool).increaseObservationCardinalityNext(cardinalityNext);
+    }
+
+    /**
+     * @notice Convert fees the vault received in `token` into USDC, then distribute.
+     *         `minUsdcOut` comes from the keeper's quote and must be at least the TWAP
+     *         value minus MAX_SWAP_SLIPPAGE_BPS, so a bad quote or a manipulated spot
+     *         price cannot sell the fees cheaply. Large amounts may need several calls.
+     */
+    function swapTokenFees(address token, uint256 amountIn, uint256 minUsdcOut)
+        external
+        nonReentrant
+        onlyRole(KEEPER_ROLE)
+    {
+        TokenRecord storage rec = _requireRecord(token);
+        address router = swapRouter;
+        if (router == address(0)) revert SwapRouterNotSet();
+        (IUniswapV3PoolMinimal pool, uint256 twapOut, uint256 floor) = _swapBound(rec, token, amountIn);
+        if (minUsdcOut < floor) revert MinOutBelowTwap(minUsdcOut, floor);
+
+        uint256 out = FeeVault(payable(rec.vault)).swapTokenFees(router, pool.fee(), amountIn, minUsdcOut);
+        emit TokenFeesSwapped(token, amountIn, out, twapOut);
+        _distributeIncoming(token);
+    }
+
+    /**
+     * @notice TWAP value of `amountIn` token fees in USDC, and the lowest `minUsdcOut`
+     *         `swapTokenFees` accepts for it. For keepers and UIs.
+     */
+    function swapFloor(address token, uint256 amountIn) external view returns (uint256 twapOut, uint256 floor) {
+        (, twapOut, floor) = _swapBound(_requireRecord(token), token, amountIn);
+    }
+
+    function _swapBound(TokenRecord storage rec, address token, uint256 amountIn)
+        internal
+        view
+        returns (IUniswapV3PoolMinimal pool, uint256 twapOut, uint256 floor)
+    {
+        pool = IUniswapV3PoolMinimal(ILaunchpadAdapter(rec.adapter).usdcPool(token));
+        if (address(pool) == address(0)) revert NoUsdcPool(token);
+        if (amountIn == 0 || amountIn > type(uint128).max) revert InvalidSwapAmount(amountIn);
+        twapOut = TwapQuote.quote(pool, SWAP_TWAP_WINDOW, token, address(USDC), uint128(amountIn));
+        floor = (twapOut * (10_000 - MAX_SWAP_SLIPPAGE_BPS)) / 10_000;
+    }
+
+    function _distributeIncoming(address token) internal {
         TokenRecord storage rec = _requireRecord(token);
         FeeVault vault = FeeVault(payable(rec.vault));
 
@@ -732,6 +820,13 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
         address old = treasury;
         treasury = newTreasury;
         emit TreasuryUpdated(old, newTreasury);
+    }
+
+    /// @notice Set the Uniswap router used for token-fee swaps (0 disables).  Via timelock.
+    function setSwapRouter(address newRouter) external onlyTimelock {
+        address old = swapRouter;
+        swapRouter = newRouter;
+        emit SwapRouterUpdated(old, newRouter);
     }
 
     /// @notice Update the BuybackModule address.  Via timelock.

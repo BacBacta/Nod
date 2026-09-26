@@ -8,7 +8,7 @@ import {Registry}          from "../Registry.sol";
 import {FeeVaultFactory}   from "../FeeVaultFactory.sol";
 import {FeeVault}          from "../FeeVault.sol";
 import {IdentityAttestor}  from "../IdentityAttestor.sol";
-import {BullcheeseAdapter} from "../BullcheeseAdapter.sol";
+import {MockLaunchpadAdapter} from "../test-helpers/MockLaunchpadAdapter.sol";
 
 import {MockERC20}     from "../test-helpers/MockERC20.sol";
 import {MockLaunchpad} from "../test-helpers/MockLaunchpad.sol";
@@ -26,7 +26,7 @@ contract NodHandler is Test {
     IdentityAttestor  public attestor;
     Registry          public registry;
     MockLaunchpad     public launchpad;
-    BullcheeseAdapter public adapter;
+    MockLaunchpadAdapter public adapter;
 
     // ─── Roles ───────────────────────────────────────────────────────────────────
     address public admin;
@@ -63,7 +63,7 @@ contract NodHandler is Test {
         IdentityAttestor _attestor,
         Registry _registry,
         MockLaunchpad _launchpad,
-        BullcheeseAdapter _adapter,
+        MockLaunchpadAdapter _adapter,
         address _admin,
         address _timelockAddr,
         address _pauser,
@@ -163,7 +163,7 @@ contract NodInvariantTest is StdInvariant, Test {
     IdentityAttestor  internal attestor;
     Registry          internal registry;
     MockLaunchpad     internal launchpad;
-    BullcheeseAdapter internal adapter;
+    MockLaunchpadAdapter internal adapter;
     NodHandler        internal handler;
 
     address internal admin       = makeAddr("inv_admin");
@@ -194,7 +194,7 @@ contract NodInvariantTest is StdInvariant, Test {
         factory   = new FeeVaultFactory(admin, address(usdc), 10_000_000e6);
         attestor  = new IdentityAttestor(admin, attesterAddr, pauser);
         launchpad = new MockLaunchpad();
-        adapter   = new BullcheeseAdapter(address(launchpad));
+        adapter   = new MockLaunchpadAdapter(address(launchpad));
 
         registry = new Registry(
             address(usdc),

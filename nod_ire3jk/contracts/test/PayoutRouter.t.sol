@@ -8,7 +8,7 @@ import {Registry}          from "../Registry.sol";
 import {FeeVaultFactory}   from "../FeeVaultFactory.sol";
 import {FeeVault}          from "../FeeVault.sol";
 import {IdentityAttestor}  from "../IdentityAttestor.sol";
-import {BullcheeseAdapter} from "../BullcheeseAdapter.sol";
+import {MockLaunchpadAdapter} from "../test-helpers/MockLaunchpadAdapter.sol";
 
 import {MockERC20}     from "../test-helpers/MockERC20.sol";
 import {MockLaunchpad} from "../test-helpers/MockLaunchpad.sol";
@@ -21,7 +21,7 @@ contract PayoutRouterTest is Test {
     Registry          internal registry;
     PayoutRouter      internal router;
     MockLaunchpad     internal launchpad;
-    BullcheeseAdapter internal adapter;
+    MockLaunchpadAdapter internal adapter;
 
     // ─── Keys ────────────────────────────────────────────────────────────────────
     address internal admin   = makeAddr("admin");
@@ -52,7 +52,7 @@ contract PayoutRouterTest is Test {
         factory   = new FeeVaultFactory(admin, address(usdc), 1_000_000e6);
         attestor  = new IdentityAttestor(admin, attesterAddr, pauser);
         launchpad = new MockLaunchpad();
-        adapter   = new BullcheeseAdapter(address(launchpad));
+        adapter   = new MockLaunchpadAdapter(address(launchpad));
 
         registry = new Registry(
             address(usdc),
