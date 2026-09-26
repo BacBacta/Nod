@@ -1,0 +1,16 @@
+# Foundry build artefacts
+contracts/out/
+contracts/cache/
+broadcast/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Recovery files
+.circle/
+
+# Dependencies
+lib/
+node_modules/

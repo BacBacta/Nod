@@ -1,0 +1,13 @@
+{
+  "name": "nod-protocol",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "forge build",
+    "test": "forge test --gas-report",
+    "check": "forge build"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "5.1.0"
+  }
+}
