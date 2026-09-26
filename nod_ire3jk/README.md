@@ -153,7 +153,7 @@ forge test -vv
 forge test --gas-report --no-match-test "invariant"
 ```
 
-157 tests total: 153 unit/fuzz + 4 invariant suites.
+161 tests total: 157 unit/fuzz + 4 invariant suites.
 
 ---
 
@@ -181,6 +181,19 @@ cooldown, writes addresses to `frontend/src/deployments/31337.json` and regenera
 `frontend/src/abi/`. After the Arc Testnet deployment, fill
 `frontend/src/deployments/5042002.json` with the `DeployNod` addresses
 (`usdc`, `registry`, `payoutRouter`, `attestor`, `factory`, plus `adapter` and `fallback`).
+
+---
+
+## Attestation service (`attestation-service/`)
+
+Links a creator's X, Farcaster, GitHub, TikTok or Reddit account to a wallet and signs
+the `IdentityAttestor` attestation. See `attestation-service/README.md`.
+
+`IdentityAttestor` rules the service relies on:
+- `creatorId = creatorIdOf(keccak256(platform), externalId)`. An id is bound to its
+  platform on first attestation, and attestations for another platform are rejected.
+- `attest` only links a first wallet or re-confirms the same one. Changing wallets
+  requires `initiateRotation` and its 7-day delay.
 
 ---
 
