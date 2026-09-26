@@ -58,6 +58,10 @@ contract IdentityAttestor is AccessControl, Pausable, EIP712 {
     error ZeroAddress();
     /// @notice The wallet attempting the action is not the current verified wallet.
     error NotVerifiedWallet(bytes32 platformId, address expected, address got);
+    /// @notice Changing an existing identity's wallet must go through the 7-day rotation.
+    error WalletChangeRequiresRotation(bytes32 platformId, address current, address requested);
+    /// @notice The identity is bound to a different platform.
+    error PlatformMismatch(bytes32 platformId, bytes32 bound, bytes32 given);
 
     // ─── Events ──────────────────────────────────────────────────────────────────
 
@@ -132,6 +136,9 @@ contract IdentityAttestor is AccessControl, Pausable, EIP712 {
     /// @notice nonce => consumed flag for replay protection.
     mapping(bytes32 nonce => bool) public usedNonces;
 
+    /// @notice platformUserId => platform it was first attested on (bound forever).
+    mapping(bytes32 platformId => bytes32 platform) public platformOf;
+
     // ─── Constructor ─────────────────────────────────────────────────────────────
 
     /**
@@ -180,6 +187,12 @@ contract IdentityAttestor is AccessControl, Pausable, EIP712 {
 
         AttestationRecord storage rec = attestations[platformUserId];
         if (rec.revoked) revert IdentityRevoked(platformUserId);
+        _bindPlatform(platformUserId, platform);
+        // A different wallet must use initiateRotation (7-day delay), so a hijacked
+        // platform account cannot redirect an existing creator's fees instantly.
+        if (rec.wallet != address(0) && rec.wallet != wallet) {
+            revert WalletChangeRequiresRotation(platformUserId, rec.wallet, wallet);
+        }
 
         // First attestation
         if (rec.firstAttestedAt == 0) {
@@ -220,6 +233,7 @@ contract IdentityAttestor is AccessControl, Pausable, EIP712 {
         if (rec.revoked) revert IdentityRevoked(platformUserId);
         // Must already have an attestation to rotate
         if (rec.wallet == address(0)) revert ZeroAddress();
+        _bindPlatform(platformUserId, platform);
 
         uint48 activatesAt = uint48(block.timestamp) + ROTATION_DELAY;
         rec.pendingWallet = newWallet;
@@ -280,6 +294,21 @@ contract IdentityAttestor is AccessControl, Pausable, EIP712 {
     // ─── View helpers ────────────────────────────────────────────────────────────
 
     /**
+     * @notice Canonical `platformUserId` for an account: hashing the platform in keeps
+     *         identical numeric ids on different platforms (e.g. GitHub 123 and X 123)
+     *         from colliding.  The attestation service must derive ids this way.
+     * @param platform    keccak256 of the platform name, e.g. keccak256("x").
+     * @param externalId  The platform's immutable account id, as a string.
+     */
+    function creatorIdOf(bytes32 platform, string calldata externalId)
+        external
+        pure
+        returns (bytes32)
+    {
+        return keccak256(abi.encode(platform, externalId));
+    }
+
+    /**
      * @notice Return the current verified wallet for `platformUserId`, or address(0)
      *         if unattested or revoked.
      */
@@ -311,6 +340,16 @@ contract IdentityAttestor is AccessControl, Pausable, EIP712 {
     }
 
     // ─── Internal ────────────────────────────────────────────────────────────────
+
+    /// @dev Bind `platformUserId` to `platform` on first use; reject any other platform.
+    function _bindPlatform(bytes32 platformUserId, bytes32 platform) internal {
+        bytes32 bound = platformOf[platformUserId];
+        if (bound == bytes32(0)) {
+            platformOf[platformUserId] = platform;
+        } else if (bound != platform) {
+            revert PlatformMismatch(platformUserId, bound, platform);
+        }
+    }
 
     /**
      * @dev Verify an EIP-712 attestation signature and consume the nonce.

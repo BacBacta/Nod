@@ -100,9 +100,55 @@ contract IdentityAttestorTest is Test {
         uint48 first = attestor.firstAttestedAt(PLATFORM_USER);
 
         vm.warp(2000);
-        _attest(PLATFORM, PLATFORM_USER, bob, keccak256("nonce2"));
+        _attest(PLATFORM, PLATFORM_USER, alice, keccak256("nonce2"));
         // firstAttestedAt must be unchanged
         assertEq(attestor.firstAttestedAt(PLATFORM_USER), first);
+    }
+
+    function test_Attest_DifferentWalletRequiresRotation() public {
+        _attest(PLATFORM, PLATFORM_USER, alice, keccak256("nonce1"));
+        uint48 expiry = uint48(block.timestamp + 1 days);
+        bytes32 nonce = keccak256("nonce2");
+        bytes memory sig = _sign(PLATFORM, PLATFORM_USER, bob, expiry, nonce);
+
+        vm.expectRevert(abi.encodeWithSelector(
+            IdentityAttestor.WalletChangeRequiresRotation.selector, PLATFORM_USER, alice, bob
+        ));
+        attestor.attest(PLATFORM, PLATFORM_USER, bob, expiry, nonce, sig);
+        assertEq(attestor.walletOf(PLATFORM_USER), alice);
+    }
+
+    function test_Attest_PlatformMismatchReverts() public {
+        _attest(PLATFORM, PLATFORM_USER, alice, keccak256("nonce1"));
+        bytes32 other = keccak256("github");
+        uint48 expiry = uint48(block.timestamp + 1 days);
+        bytes32 nonce = keccak256("nonce2");
+        bytes memory sig = _sign(other, PLATFORM_USER, alice, expiry, nonce);
+
+        vm.expectRevert(abi.encodeWithSelector(
+            IdentityAttestor.PlatformMismatch.selector, PLATFORM_USER, PLATFORM, other
+        ));
+        attestor.attest(other, PLATFORM_USER, alice, expiry, nonce, sig);
+    }
+
+    function test_InitiateRotation_PlatformMismatchReverts() public {
+        _attest(PLATFORM, PLATFORM_USER, alice, keccak256("nonce1"));
+        bytes32 other = keccak256("github");
+        uint48 expiry = uint48(block.timestamp + 1 days);
+        bytes32 nonce = keccak256("nonce2");
+        bytes memory sig = _sign(other, PLATFORM_USER, bob, expiry, nonce);
+
+        vm.expectRevert(abi.encodeWithSelector(
+            IdentityAttestor.PlatformMismatch.selector, PLATFORM_USER, PLATFORM, other
+        ));
+        attestor.initiateRotation(other, PLATFORM_USER, bob, expiry, nonce, sig);
+    }
+
+    function test_CreatorIdOf_SeparatesPlatforms() public view {
+        bytes32 x = attestor.creatorIdOf(keccak256("x"), "12345");
+        bytes32 gh = attestor.creatorIdOf(keccak256("github"), "12345");
+        assertTrue(x != gh);
+        assertEq(x, keccak256(abi.encode(keccak256("x"), "12345")));
     }
 
     function test_Attest_EmitsEvent() public {
@@ -318,15 +364,20 @@ contract IdentityAttestorTest is Test {
 
     // ─── Handle-agnostic: same platformUserId different platform ─────────────────
 
-    function test_SamePlatformUserIdDifferentPlatformIsHandleAgnostic() public {
+    function test_SamePlatformUserIdDifferentPlatformCannotOverwrite() public {
         bytes32 platform2 = keccak256("nod_v2");
 
         _attest(PLATFORM, PLATFORM_USER, alice, keccak256("nonce1"));
-        // Same user ID, different platform context — still works
-        _attest(platform2, PLATFORM_USER, bob, keccak256("nonce2"));
+        // The identity is bound to PLATFORM; another platform cannot take it over.
+        uint48 expiry = uint48(block.timestamp + 1 days);
+        bytes32 nonce = keccak256("nonce2");
+        bytes memory sig = _sign(platform2, PLATFORM_USER, bob, expiry, nonce);
+        vm.expectRevert(abi.encodeWithSelector(
+            IdentityAttestor.PlatformMismatch.selector, PLATFORM_USER, PLATFORM, platform2
+        ));
+        attestor.attest(platform2, PLATFORM_USER, bob, expiry, nonce, sig);
 
-        // Last attest wins for the same platformUserId
-        assertEq(attestor.walletOf(PLATFORM_USER), bob);
+        assertEq(attestor.walletOf(PLATFORM_USER), alice);
     }
 
 }

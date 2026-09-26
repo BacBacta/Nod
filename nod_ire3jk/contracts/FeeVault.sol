@@ -17,8 +17,11 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
  *         and an ERC-20 (6-decimal ERC-20 view), backed by ONE balance pool.  This
  *         contract uses ONLY the ERC-20 view for all accounting:
  *           • All balances are tracked via ERC-20 transfer deltas (balanceOf snapshots).
- *           • `receive()` explicitly reverts — no native value must ever be sent here.
- *           • `address(this).balance` is never read, written, or used in any calculation.
+ *           • Native USDC sent here (e.g. a launchpad paying fees with msg.value) is
+ *             accepted: it lands in the same pool, so it shows up in the ERC-20
+ *             `balanceOf` and is picked up by the next `notifyReceived()`.
+ *           • `address(this).balance` is never read, written, or used in any calculation,
+ *             so the two views can never be double-counted.
  *
  *         ── Fund-movement restriction ────────────────────────────────────────────────
  *         The only address that may move funds out of this vault is the Registry (via
@@ -38,16 +41,14 @@ contract FeeVault is ReentrancyGuard {
 
     // ─── Errors ──────────────────────────────────────────────────────────────────
 
-    /// @notice Native USDC must never be sent to this vault.
-    error NativeNotAccepted();
+    /// @notice Call with calldata that matches no function.
+    error UnsupportedCall();
     /// @notice Caller is not the authorised Registry.
     error NotRegistry();
     /// @notice Transfer amount exceeds the vault's current ERC-20 balance.
     error InsufficientBalance(uint256 available, uint256 requested);
     /// @notice Recipient has insufficient accrued claimable balance.
     error InsufficientClaimable(uint256 available, uint256 requested);
-    /// @notice Deposit would exceed the per-vault beta cap.
-    error DepositCapExceeded(uint256 cap, uint256 wouldBe);
     /// @notice Zero-address argument where a non-zero address is required.
     error ZeroAddress();
 
@@ -55,6 +56,10 @@ contract FeeVault is ReentrancyGuard {
 
     /// @notice Emitted when a USDC deposit delta is recorded.
     event FeeReceived(address indexed vault, uint256 amount);
+
+    /// @notice Emitted when inbound USDC above the deposit cap is left uncounted.
+    ///         It stays in the vault and is counted once the cap is raised.
+    event DepositCapReached(address indexed vault, uint256 cap, uint256 uncounted);
 
     /// @notice Emitted when funds are transferred out by the Registry.
     event FundsTransferred(address indexed to, uint256 amount, bytes32 indexed reason);
@@ -159,7 +164,10 @@ contract FeeVault is ReentrancyGuard {
      *         fees received.
      *
      * @dev    `totalReceived` tracks cumulative inbound USDC and is derived from the
-     *         current balance plus all previously observed outflows.
+     *         current balance plus all previously observed outflows.  With a deposit
+     *         cap, only the amount up to the cap is counted; the rest stays in the
+     *         vault, is not distributable, and is counted on a later call once the cap
+     *         is raised.  This never reverts, so distribution is never blocked.
      */
     function notifyReceived() external nonReentrant {
         uint256 balance = USDC.balanceOf(address(this));
@@ -173,8 +181,12 @@ contract FeeVault is ReentrancyGuard {
             delta = currentGross - accounted;
         }
 
-        if (depositCap > 0 && totalReceived + delta > depositCap) {
-            revert DepositCapExceeded(depositCap, totalReceived + delta);
+        uint256 cap = depositCap;
+        if (cap > 0 && accounted + delta > cap) {
+            uint256 room = cap > accounted ? cap - accounted : 0;
+            emit DepositCapReached(address(this), cap, delta - room);
+            if (room == 0) return;
+            delta = room;
         }
 
         totalReceived += delta;
@@ -244,23 +256,28 @@ contract FeeVault is ReentrancyGuard {
     // ─── View helpers ────────────────────────────────────────────────────────────
 
     /**
-     * @notice Current uncommitted USDC balance in this vault (ERC-20 view).
+     * @notice USDC counted by `notifyReceived` and not yet credited or sent out.
+     *         Funds above the deposit cap (uncounted) are excluded.
      */
     function availableBalance() external view returns (uint256) {
+        uint256 committed = totalCredited + totalDirectOut;
+        uint256 counted = totalReceived > committed ? totalReceived - committed : 0;
+
+        // Never report more than is physically held beyond recipients' claims.
         uint256 lockedForRecipients = totalCredited - totalWithdrawn;
         uint256 balance = USDC.balanceOf(address(this));
-        return balance > lockedForRecipients ? balance - lockedForRecipients : 0;
+        uint256 held = balance > lockedForRecipients ? balance - lockedForRecipients : 0;
+        return counted < held ? counted : held;
     }
 
     // ─── Native ETH / USDC rejection ─────────────────────────────────────────────
 
-    /// @dev On Arc, native value is USDC — explicitly reject to prevent double-counting.
-    receive() external payable {
-        revert NativeNotAccepted();
-    }
+    /// @dev On Arc, native value IS USDC (same balance as the ERC-20 view).  Accept it;
+    ///      accounting only ever reads `USDC.balanceOf`, so nothing is counted twice.
+    receive() external payable {}
 
-    /// @dev Fallback also rejects native value (not payable so casts from plain address work).
+    /// @dev Unknown calls revert (not payable: native value must come via `receive`).
     fallback() external {
-        revert NativeNotAccepted();
+        revert UnsupportedCall();
     }
 }

@@ -36,11 +36,15 @@ import {BuybackModule}         from "../BuybackModule.sol";
  *                                  Pass "0" for no cap.
  *           NOD_PROTOCOL_FEE    — Initial protocol fee in basis points.  E.g. "1000"
  *                                  = 10%.  Must be ≤ 1500.
- *           PRIVATE_KEY         — Deployer private key (used by forge script --broadcast).
+ *
+ *         The deployer key is NOT read from the environment.  Import it once into an
+ *         encrypted Foundry keystore and pass it with --account:
+ *           cast wallet import nod-deployer --interactive
  *
  *          Running 
  *         forge script contracts/script/DeployNod.s.sol \
  *           --rpc-url https://rpc.testnet.arc.io \
+ *           --account nod-deployer \
  *           --broadcast \
  *           --verify \
  *           --with-gas-price 20000000000 \
@@ -55,7 +59,7 @@ import {BuybackModule}         from "../BuybackModule.sol";
  *           5.  Deploys Registry (deployer is temporary DEFAULT_ADMIN).
  *           6.  Deploys PayoutRouter (deployer is DEFAULT_ADMIN).
  *           7.  Wires: factory.setRegistry, registry grants PAYOUT_ROUTER_ROLE.
- *           8.  Whitelists the initial fallback recipient in Registry.
+ *           8.  Checks the initial fallback (whitelisted by the Registry constructor).
  *           9.  Grants DEFAULT_ADMIN_ROLE of Registry + IdentityAttestor to timelock,
  *               then deployer renounces DEFAULT_ADMIN_ROLE on both.
  *          10.  Prints all addresses for AGENTS.md.
@@ -115,18 +119,17 @@ contract DeployNod is Script {
         _requireNonZero(fallback1, "NOD_FALLBACK1");
         require(feeBps <= 1500, "DeployNod: NOD_PROTOCOL_FEE must be <= 1500 bps");
 
-        uint256 deployerPrivKey = vm.envUint("PRIVATE_KEY");
-        address deployer = vm.addr(deployerPrivKey);
+        // Signer comes from --account (encrypted keystore); never from env vars.
+        vm.startBroadcast();
+        (, address deployer,) = vm.readCallers();
 
-        console2.log("=== Nod Protocol Deployment — Arc Testnet ===");
+        console2.log("=== Nod Protocol Deployment - Arc Testnet ===");
         console2.log("Deployer:  ", deployer);
         console2.log("Multisig:  ", multisig);
         console2.log("Treasury:  ", treasury);
         console2.log("Fallback1: ", fallback1);
         console2.log("DepCap:    ", depositCap);
         console2.log("FeeBps:    ", feeBps);
-
-        vm.startBroadcast(deployerPrivKey);
 
         //  Step 1: NodTimelockController 
         NodTimelockController timelock = new NodTimelockController(multisig);
@@ -175,7 +178,8 @@ contract DeployNod is Script {
             address(timelock),  // timelock immutable reference
             deployer,           // temporary DEFAULT_ADMIN
             pauser,
-            feeBps
+            feeBps,
+            fallback1           // initial whitelisted fallback recipient
         );
         console2.log("[5] Registry:             ", address(registry));
 
@@ -199,9 +203,9 @@ contract DeployNod is Script {
         console2.log("[7b] PAYOUT_ROUTER_ROLE granted to PayoutRouter");
 
         //  Step 8: Initial fallback whitelist 
-        //    Must happen while deployer is still DEFAULT_ADMIN on Registry.
+        //    Set by the Registry constructor (setFallbackWhitelist is timelock-only).
         //    Additional fallback addresses can be added later via timelock.
-        registry.setFallbackWhitelist(fallback1, true);
+        require(registry.whitelistedFallback(fallback1), "DeployNod: fallback not whitelisted");
         console2.log("[8] Fallback whitelisted: ", fallback1);
 
         //  Step 9: Hand off DEFAULT_ADMIN to timelock; deployer renounces 

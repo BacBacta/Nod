@@ -118,6 +118,7 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
         address redirectTo;     // optional redirect for this recipient's share
         // Signature tracking for split changes (packed with redirectTo)
         bool    hasSigned;      // whether this recipient has signed the pending change
+        uint256 reserved;       // gross share held for this recipient while it is PENDING
     }
 
     struct TokenRecord {
@@ -137,6 +138,7 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
         uint8              splitChangeSigCount;
         SplitRecipient[10] pendingSplits;
         uint8              pendingSplitCount;
+        uint256            totalReserved; // sum of splits[i].reserved
     }
 
     // ─── Roles ───────────────────────────────────────────────────────────────────
@@ -204,12 +206,14 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
         address _timelock,
         address admin,
         address pauser,
-        uint16  _protocolFeeBps
+        uint16  _protocolFeeBps,
+        address _initialFallback
     ) {
         if (
             _usdc == address(0) || _factory == address(0) || _attestor == address(0) ||
             _treasury == address(0) || _buybackModule == address(0) ||
-            _timelock == address(0) || admin == address(0) || pauser == address(0)
+            _timelock == address(0) || admin == address(0) || pauser == address(0) ||
+            _initialFallback == address(0)
         ) revert ZeroAddress();
         if (_protocolFeeBps > PROTOCOL_FEE_CAP) {
             revert ProtocolFeeExceedsCap(_protocolFeeBps, PROTOCOL_FEE_CAP);
@@ -222,6 +226,11 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
         buybackModule = _buybackModule;
         timelock      = _timelock;
         protocolFeeBps = _protocolFeeBps;
+
+        // setFallbackWhitelist is timelock-only, so the first fallback must be set
+        // here or no token could register until a 48h timelock op executes.
+        whitelistedFallback[_initialFallback] = true;
+        emit FallbackWhitelisted(_initialFallback, true);
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(PAUSER_ROLE, pauser);
@@ -304,7 +313,8 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
                 bps:        splits[i].bps,
                 state:      TokenState.PENDING,
                 redirectTo: address(0),
-                hasSigned:  false
+                hasSigned:  false,
+                reserved:   0
             });
             unchecked { ++i; }
         }
@@ -383,6 +393,8 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
 
         rec.state = TokenState.REFUSED;
         rec.refusedAt = uint48(block.timestamp);
+        // Shares held for PENDING recipients follow the REFUSED routing (fallback).
+        _clearReserves(rec);
         emit TokenRefused(token, rec.creatorId);
     }
 
@@ -424,7 +436,10 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
         sr.state = TokenState.ACCEPTED;
         emit SplitRecipientAccepted(token, splitIndex, sr.recipient);
 
-        // Try to distribute any accrued pending funds for this recipient
+        // Release the share held while this recipient was PENDING, then distribute
+        // any newly received funds.
+        uint256 held = _releaseReserve(rec, sr);
+        if (held > 0) _routeAcceptedShare(token, rec, FeeVault(payable(rec.vault)), sr, held);
         _distributeSingleRecipient(token, rec, splitIndex);
     }
 
@@ -443,6 +458,11 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
         }
         sr.state = TokenState.REFUSED;
         emit SplitRecipientRefused(token, splitIndex, sr.recipient);
+
+        uint256 held = _releaseReserve(rec, sr);
+        if (held > 0) {
+            FeeVault(payable(rec.vault)).transferOut(rec.fallbackRecipient, held, REASON_FALLBACK);
+        }
     }
 
     /**
@@ -462,6 +482,9 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
 
         sr.state = TokenState.EXPIRED;
         emit SplitRecipientExpired(token, splitIndex, sr.recipient);
+
+        uint256 held = _releaseReserve(rec, sr);
+        if (held > 0) _splitProtocolFee(token, rec, FeeVault(payable(rec.vault)), held);
     }
 
     // ─── Splits change ───────────────────────────────────────────────────────────
@@ -503,7 +526,8 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
                 bps:        newSplits[i].bps,
                 state:      TokenState.PENDING,
                 redirectTo: address(0),
-                hasSigned:  false
+                hasSigned:  false,
+                reserved:   0
             });
             unchecked { ++i; }
         }
@@ -579,7 +603,7 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
         TokenState s = rec.state;
         if (s == TokenState.PENDING) return; // accumulate
 
-        uint256 available = vault.availableBalance();
+        uint256 available = _distributable(rec, vault);
         if (available == 0) return;
 
         if (s == TokenState.REFUSED) {
@@ -604,7 +628,7 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
         }
         FeeVault vault = FeeVault(payable(rec.vault));
         vault.notifyReceived();
-        uint256 available = vault.availableBalance();
+        uint256 available = _distributable(rec, vault);
         if (available == 0) return;
         _distributeAllExpired(token, rec, vault, available);
     }
@@ -766,6 +790,11 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
         return (sr.recipient, sr.bps, sr.state, sr.redirectTo);
     }
 
+    /// @notice Gross USDC held for split `i` of `token` while that recipient is PENDING.
+    function reservedOf(address token, uint8 i) external view returns (uint256) {
+        return _records[token].splits[i].reserved;
+    }
+
     /// @notice Return full record for `token` (core fields, not splits array).
     function getRecord(address token)
         external
@@ -853,6 +882,9 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
     }
 
     function _applySplitsChange(address token, TokenRecord storage rec) internal {
+        // Every current recipient signed the change, so shares held for PENDING
+        // recipients return to the pool and are distributed under the new splits.
+        _clearReserves(rec);
         uint8 newCount = rec.pendingSplitCount;
         rec.splitCount = newCount;
         for (uint8 i = 0; i < newCount; ) {
@@ -928,12 +960,11 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
             TokenState srState = sr.state;
 
             if (srState == TokenState.ACCEPTED) {
-                uint256 fee = (gross * protocolFeeBps) / 10_000;
-                uint256 net = gross - fee;
-                if (fee > 0) _splitProtocolFee(token, rec, vault, fee);
-                if (net > 0) {
-                    vault.credit(sr.recipient, net);
-                }
+                _routeAcceptedShare(token, rec, vault, sr, gross);
+            } else if (srState == TokenState.PENDING) {
+                // Hold the share until the recipient accepts, refuses or expires.
+                sr.reserved += gross;
+                rec.totalReserved += gross;
             } else if (srState == TokenState.REFUSED) {
                 vault.transferOut(rec.fallbackRecipient, gross, REASON_FALLBACK);
             } else if (srState == TokenState.EXPIRED) {
@@ -946,6 +977,52 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
             unchecked { ++i; }
         }
         emit FundsDistributed(token, address(vault), available);
+    }
+
+    /// @dev Route an ACCEPTED recipient's gross share: protocol fee out, net credited.
+    function _routeAcceptedShare(
+        address token,
+        TokenRecord storage rec,
+        FeeVault vault,
+        SplitRecipient storage sr,
+        uint256 gross
+    ) internal {
+        uint256 fee = (gross * protocolFeeBps) / 10_000;
+        uint256 net = gross - fee;
+        if (fee > 0) _splitProtocolFee(token, rec, vault, fee);
+        if (net > 0) vault.credit(sr.recipient, net);
+    }
+
+    /// @dev Vault funds not yet credited and not held for PENDING recipients.
+    function _distributable(TokenRecord storage rec, FeeVault vault)
+        internal
+        view
+        returns (uint256)
+    {
+        uint256 available = vault.availableBalance();
+        uint256 held = rec.totalReserved;
+        return available > held ? available - held : 0;
+    }
+
+    /// @dev Zero `sr.reserved` and return the amount that was held.
+    function _releaseReserve(TokenRecord storage rec, SplitRecipient storage sr)
+        internal
+        returns (uint256 held)
+    {
+        held = sr.reserved;
+        if (held == 0) return 0;
+        sr.reserved = 0;
+        rec.totalReserved -= held;
+    }
+
+    /// @dev Release every held share back to the undistributed pool.
+    function _clearReserves(TokenRecord storage rec) internal {
+        if (rec.totalReserved == 0) return;
+        for (uint8 i = 0; i < rec.splitCount; ) {
+            rec.splits[i].reserved = 0;
+            unchecked { ++i; }
+        }
+        rec.totalReserved = 0;
     }
 
     /// @dev Sum shares for recipients at indices 1..count-1 (to compute dust for index 0).
@@ -980,7 +1057,8 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
      */
     function _distributeAccruedFees(address token, TokenRecord storage rec) internal {
         FeeVault vault = FeeVault(payable(rec.vault));
-        uint256 available = vault.availableBalance();
+        vault.notifyReceived(); // count fees that arrived since the last snapshot
+        uint256 available = _distributable(rec, vault);
         if (available == 0) return;
         _distributeAccepted(token, rec, vault, available);
     }
@@ -996,7 +1074,8 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
     ) internal {
         // Re-run full distribution — simpler and safer than partial distribution
         FeeVault vault = FeeVault(payable(rec.vault));
-        uint256 available = vault.availableBalance();
+        vault.notifyReceived(); // count fees that arrived since the last snapshot
+        uint256 available = _distributable(rec, vault);
         if (available == 0) return;
         _distributeAccepted(token, rec, vault, available);
     }

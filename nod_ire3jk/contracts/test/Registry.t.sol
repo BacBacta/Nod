@@ -73,7 +73,8 @@ contract RegistryTest is Test {
             timelockAddr,
             admin,
             pauser,
-            FEE_BPS
+            FEE_BPS,
+            fallbackAddr
         );
 
         // Wire factory → registry
@@ -820,6 +821,113 @@ contract RegistryTest is Test {
         uint256 maxFee = amount * 1500 / 10_000;
         uint256 fee    = amount * registry.protocolFeeBps() / 10_000;
         assertTrue(fee <= maxFee, "fee exceeds 1500 bps cap");
+    }
+
+    // ─── Shares held for PENDING split recipients ────────────────────────────────
+
+    /// @dev r1 ACCEPTED, r2 PENDING, 100 USDC distributed once.
+    function _setupHeldShare() internal returns (FeeVault vault) {
+        vault = FeeVault(payable(_registerAndAccept(launchToken, _makeSplits2(recipient1, recipient2))));
+        vm.prank(recipient1);
+        registry.acceptSplit(launchToken, 0);
+        usdc.mint(address(vault), 100e6);
+        registry.distributeIncoming(launchToken);
+    }
+
+    function test_PendingShare_NotRedistributedByRepeatedCalls() public {
+        FeeVault vault = _setupHeldShare();
+        for (uint256 i; i < 20; ++i) registry.distributeIncoming(launchToken);
+
+        assertEq(vault.claimable(recipient1), 45e6);
+        assertEq(registry.reservedOf(launchToken, 1), 50e6);
+        assertEq(usdc.balanceOf(address(vault)), 95e6);
+        assertEq(usdc.balanceOf(treasury) + usdc.balanceOf(buyback), 5e6);
+    }
+
+    function test_PendingShare_CreditedOnAcceptSplit() public {
+        FeeVault vault = _setupHeldShare();
+        vm.prank(recipient2);
+        registry.acceptSplit(launchToken, 1);
+
+        assertEq(registry.reservedOf(launchToken, 1), 0);
+        assertEq(vault.claimable(recipient1), 45e6);
+        assertEq(vault.claimable(recipient2), 45e6);
+        assertEq(usdc.balanceOf(treasury) + usdc.balanceOf(buyback), 10e6);
+    }
+
+    function test_PendingShare_ToFallbackOnRefuseSplit() public {
+        FeeVault vault = _setupHeldShare();
+        vm.prank(recipient2);
+        registry.refuseSplit(launchToken, 1);
+
+        assertEq(registry.reservedOf(launchToken, 1), 0);
+        assertEq(usdc.balanceOf(fallbackAddr), 50e6);
+        assertEq(vault.claimable(recipient1), 45e6);
+    }
+
+    function test_PendingShare_SplitOnExpireSplitRecipient() public {
+        _setupHeldShare();
+        vm.warp(block.timestamp + 14 days + 1);
+        registry.expireSplitRecipient(launchToken, 1);
+
+        assertEq(registry.reservedOf(launchToken, 1), 0);
+        assertEq(usdc.balanceOf(treasury) + usdc.balanceOf(buyback), 55e6);
+    }
+
+    function test_PendingShare_ToFallbackOnTokenRefuse() public {
+        FeeVault vault = _setupHeldShare();
+        vm.prank(creatorWallet);
+        registry.refuse(launchToken);
+        registry.distributeIncoming(launchToken);
+
+        assertEq(registry.reservedOf(launchToken, 1), 0);
+        assertEq(usdc.balanceOf(fallbackAddr), 50e6);
+        assertEq(vault.claimable(recipient1), 45e6); // accrued claims survive refusal
+    }
+
+    function test_PendingShare_NewFeesStillFlowToAccepted() public {
+        FeeVault vault = _setupHeldShare();
+        usdc.mint(address(vault), 100e6);
+        registry.distributeIncoming(launchToken);
+
+        assertEq(vault.claimable(recipient1), 90e6);
+        assertEq(registry.reservedOf(launchToken, 1), 100e6);
+    }
+
+    function test_Accept_CountsFeesReceivedAfterRegistration() public {
+        FeeVault vault = FeeVault(payable(_registerToken(launchToken, _makeSplits2(recipient1, recipient2))));
+        usdc.mint(address(vault), 1_000e6); // arrives after registerToken's snapshot
+
+        vm.prank(creatorWallet);
+        registry.accept(launchToken);
+
+        assertEq(registry.reservedOf(launchToken, 0), 500e6);
+        assertEq(registry.reservedOf(launchToken, 1), 500e6);
+    }
+
+    function test_AcceptSplit_CountsFeesReceivedSinceLastSnapshot() public {
+        FeeVault vault = FeeVault(payable(_registerAndAccept(launchToken, _makeSplits1(recipient1))));
+        usdc.mint(address(vault), 100e6);
+
+        vm.prank(recipient1);
+        registry.acceptSplit(launchToken, 0);
+
+        assertEq(vault.claimable(recipient1), 90e6);
+    }
+
+    function test_DepositCap_DistributesOnlyUpToCap() public {
+        FeeVault vault = FeeVault(payable(_registerAndAccept(launchToken, _makeSplits1(recipient1))));
+        vm.prank(recipient1);
+        registry.acceptSplit(launchToken, 0);
+
+        uint256 cap = vault.depositCap();
+        usdc.mint(address(vault), cap + 10e6);
+        registry.distributeIncoming(launchToken); // must not revert
+        registry.distributeIncoming(launchToken);
+
+        assertEq(vault.claimable(recipient1), cap * 9 / 10);
+        assertEq(usdc.balanceOf(treasury) + usdc.balanceOf(buyback), cap / 10);
+        assertEq(usdc.balanceOf(address(vault)), cap * 9 / 10 + 10e6); // claims + excess
     }
 
     // ─── Helper ─────────────────────────────────────────────────────────────────

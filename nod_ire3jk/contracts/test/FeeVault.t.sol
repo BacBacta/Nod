@@ -97,12 +97,48 @@ contract FeeVaultTest is Test {
 
     // ─── Deposit cap ────────────────────────────────────────────────────────────
 
-    function test_DepositCap_ExceedingCapReverts() public {
-        usdc.mint(address(vault), CAP + 1);
-        vm.expectRevert(
-            abi.encodeWithSelector(FeeVault.DepositCapExceeded.selector, CAP, CAP + 1)
-        );
+    function test_DepositCap_CountsUpToCapWithoutReverting() public {
+        usdc.mint(address(vault), CAP + 5e6);
+        vm.expectEmit(true, false, false, true);
+        emit FeeVault.DepositCapReached(address(vault), CAP, 5e6);
         vault.notifyReceived();
+
+        assertEq(vault.totalReceived(), CAP);
+        assertEq(vault.availableBalance(), CAP); // excess is not distributable
+    }
+
+    function test_DepositCap_AtCapFurtherDepositsStayUncounted() public {
+        usdc.mint(address(vault), CAP);
+        vault.notifyReceived();
+        usdc.mint(address(vault), 7e6);
+        vault.notifyReceived(); // must not revert
+
+        assertEq(vault.totalReceived(), CAP);
+        assertEq(vault.availableBalance(), CAP);
+    }
+
+    function test_DepositCap_ExcessCountedAfterCapRaised() public {
+        usdc.mint(address(vault), CAP + 5e6);
+        vault.notifyReceived();
+
+        vm.prank(registry);
+        vault.setDepositCap(0);
+        vault.notifyReceived();
+
+        assertEq(vault.totalReceived(), CAP + 5e6);
+        assertEq(vault.availableBalance(), CAP + 5e6);
+    }
+
+    function test_DepositCap_ExcessNotSentOutByRegistry() public {
+        usdc.mint(address(vault), CAP + 5e6);
+        vault.notifyReceived();
+        uint256 avail = vault.availableBalance();
+
+        vm.prank(registry);
+        vault.transferOut(alice, avail, keccak256("TEST"));
+
+        assertEq(vault.availableBalance(), 0);
+        assertEq(usdc.balanceOf(address(vault)), 5e6); // excess still held
     }
 
     function test_DepositCap_ExactlyAtCapSucceeds() public {
@@ -245,19 +281,42 @@ contract FeeVaultTest is Test {
         vault.transferOut(alice, 100e6, reason);
     }
 
-    // ─── receive() reverts native value ─────────────────────────────────────────
+    // ─── Native USDC (Arc: same pool as the ERC-20 view) ─────────────────────────
 
-    function test_ReceiveReverts() public {
-        vm.expectRevert(FeeVault.NativeNotAccepted.selector);
-        (bool success,) = address(vault).call{value: 1}("");
-        // The above should revert so success is false — but expectRevert handles it
-        (success); // suppress unused warning
+    function test_ReceiveAcceptsNative() public {
+        vm.deal(alice, 1e18);
+        vm.prank(alice);
+        (bool success,) = address(vault).call{value: 1e18}("");
+        assertTrue(success);
+    }
+
+    /// @dev On Arc a 1e18-wei native send raises the ERC-20 balance by 1e6. Foundry
+    ///      has no shared pool, so the ERC-20 side is simulated with a mint; the
+    ///      vault must count it exactly once.
+    function test_NativeDepositCountedOnceViaErc20View() public {
+        vm.deal(alice, 1e18);
+        vm.prank(alice);
+        (bool success,) = address(vault).call{value: 1e18}("");
+        assertTrue(success);
+        usdc.mint(address(vault), 1e6);
+
+        vault.notifyReceived();
+        assertEq(vault.totalReceived(), 1e6);
+        vault.notifyReceived();
+        assertEq(vault.totalReceived(), 1e6);
+    }
+
+    function test_FallbackRevertsOnUnknownCall() public {
+        vm.expectRevert(FeeVault.UnsupportedCall.selector);
+        (bool success,) = address(vault).call(hex"deadbeef");
+        (success);
     }
 
     // ─── availableBalance ────────────────────────────────────────────────────────
 
     function test_AvailableBalance_CorrectAfterCredit() public {
         usdc.mint(address(vault), 100e6);
+        vault.notifyReceived();
         vm.prank(registry);
         vault.credit(alice, 40e6); // locks 40 for alice
 

@@ -63,7 +63,8 @@ contract PayoutRouterTest is Test {
             timelockAddr,
             admin,
             pauser,
-            1000
+            1000,
+            fallbackAddr
         );
 
         router = new PayoutRouter(
