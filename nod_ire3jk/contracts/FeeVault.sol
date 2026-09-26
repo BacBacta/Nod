@@ -17,8 +17,11 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
  *         and an ERC-20 (6-decimal ERC-20 view), backed by ONE balance pool.  This
  *         contract uses ONLY the ERC-20 view for all accounting:
  *           • All balances are tracked via ERC-20 transfer deltas (balanceOf snapshots).
- *           • `receive()` explicitly reverts — no native value must ever be sent here.
- *           • `address(this).balance` is never read, written, or used in any calculation.
+ *           • Native USDC sent here (e.g. a launchpad paying fees with msg.value) is
+ *             accepted: it lands in the same pool, so it shows up in the ERC-20
+ *             `balanceOf` and is picked up by the next `notifyReceived()`.
+ *           • `address(this).balance` is never read, written, or used in any calculation,
+ *             so the two views can never be double-counted.
  *
  *         ── Fund-movement restriction ────────────────────────────────────────────────
  *         The only address that may move funds out of this vault is the Registry (via
@@ -38,8 +41,8 @@ contract FeeVault is ReentrancyGuard {
 
     // ─── Errors ──────────────────────────────────────────────────────────────────
 
-    /// @notice Native USDC must never be sent to this vault.
-    error NativeNotAccepted();
+    /// @notice Call with calldata that matches no function.
+    error UnsupportedCall();
     /// @notice Caller is not the authorised Registry.
     error NotRegistry();
     /// @notice Transfer amount exceeds the vault's current ERC-20 balance.
@@ -254,13 +257,12 @@ contract FeeVault is ReentrancyGuard {
 
     // ─── Native ETH / USDC rejection ─────────────────────────────────────────────
 
-    /// @dev On Arc, native value is USDC — explicitly reject to prevent double-counting.
-    receive() external payable {
-        revert NativeNotAccepted();
-    }
+    /// @dev On Arc, native value IS USDC (same balance as the ERC-20 view).  Accept it;
+    ///      accounting only ever reads `USDC.balanceOf`, so nothing is counted twice.
+    receive() external payable {}
 
-    /// @dev Fallback also rejects native value (not payable so casts from plain address work).
+    /// @dev Unknown calls revert (not payable: native value must come via `receive`).
     fallback() external {
-        revert NativeNotAccepted();
+        revert UnsupportedCall();
     }
 }

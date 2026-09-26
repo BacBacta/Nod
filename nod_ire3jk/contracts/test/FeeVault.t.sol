@@ -245,13 +245,35 @@ contract FeeVaultTest is Test {
         vault.transferOut(alice, 100e6, reason);
     }
 
-    // ─── receive() reverts native value ─────────────────────────────────────────
+    // ─── Native USDC (Arc: same pool as the ERC-20 view) ─────────────────────────
 
-    function test_ReceiveReverts() public {
-        vm.expectRevert(FeeVault.NativeNotAccepted.selector);
-        (bool success,) = address(vault).call{value: 1}("");
-        // The above should revert so success is false — but expectRevert handles it
-        (success); // suppress unused warning
+    function test_ReceiveAcceptsNative() public {
+        vm.deal(alice, 1e18);
+        vm.prank(alice);
+        (bool success,) = address(vault).call{value: 1e18}("");
+        assertTrue(success);
+    }
+
+    /// @dev On Arc a 1e18-wei native send raises the ERC-20 balance by 1e6. Foundry
+    ///      has no shared pool, so the ERC-20 side is simulated with a mint; the
+    ///      vault must count it exactly once.
+    function test_NativeDepositCountedOnceViaErc20View() public {
+        vm.deal(alice, 1e18);
+        vm.prank(alice);
+        (bool success,) = address(vault).call{value: 1e18}("");
+        assertTrue(success);
+        usdc.mint(address(vault), 1e6);
+
+        vault.notifyReceived();
+        assertEq(vault.totalReceived(), 1e6);
+        vault.notifyReceived();
+        assertEq(vault.totalReceived(), 1e6);
+    }
+
+    function test_FallbackRevertsOnUnknownCall() public {
+        vm.expectRevert(FeeVault.UnsupportedCall.selector);
+        (bool success,) = address(vault).call(hex"deadbeef");
+        (success);
     }
 
     // ─── availableBalance ────────────────────────────────────────────────────────

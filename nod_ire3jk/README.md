@@ -15,7 +15,7 @@ and explicitly accepted the token.
 |---|---|---|
 | `NodTimelockController` | `NodTimelockController.sol` | OZ `TimelockController` wrapper (48h min delay). Becomes `DEFAULT_ADMIN` of all other contracts after bootstrap. All privileged parameter changes go through it. |
 | `FeeVaultFactory` | `FeeVaultFactory.sol` | Deploys one `FeeVault` per token via CREATE2. Salt = `keccak256(deployer, nonce)` — vault address is computable before the token exists. |
-| `FeeVault` | `FeeVault.sol` | Non-upgradeable, per-token USDC vault. Uses accrual accounting (ERC-20 only — `address(this).balance` is never read). `receive()` reverts to prevent double-counting Arc's native USDC view. |
+| `FeeVault` | `FeeVault.sol` | Non-upgradeable, per-token USDC vault. Uses accrual accounting (ERC-20 only — `address(this).balance` is never read). `receive()` accepts native USDC (same pool as the ERC-20 view), so launchpads may pay fees either way. |
 | `ILaunchpadAdapter` | `ILaunchpadAdapter.sol` | Interface every launchpad adapter must implement: `verifyFeeRecipient(token, vault)`. |
 | `BullcheeseAdapter` | `BullcheeseAdapter.sol` | Adapter for the Bullcheese launchpad. Checks that the fee recipient equals the vault AND that the fee recipient is immutably locked. |
 | `IdentityAttestor` | `IdentityAttestor.sol` | EIP-712 identity registry. Maps immutable `platformUserId` (bytes32, never a handle) to a wallet address. Enforces 7-day rotation delay and 7-day first-claim cooldown. |
@@ -134,7 +134,8 @@ After the broadcast the deployer has **no remaining privileges** on any contract
 
 On Arc, USDC is both the native gas token (18-decimal native view) and an ERC-20
 (6-decimal ERC-20 view) backed by **one** balance pool. Nod uses **only** the ERC-20
-view. `FeeVault.receive()` reverts to reject native value. All accounting uses
+view. `FeeVault.receive()` accepts native value: it lands in the same pool and is
+picked up through the ERC-20 balance, never counted twice. All accounting uses
 `IERC20(USDC).balanceOf(vault)` — `address(vault).balance` is never read.
 
 ---
@@ -152,7 +153,7 @@ forge test -vv
 forge test --gas-report --no-match-test "invariant"
 ```
 
-149 tests total: 145 unit/fuzz + 4 invariant suites.
+151 tests total: 147 unit/fuzz + 4 invariant suites.
 
 ---
 
