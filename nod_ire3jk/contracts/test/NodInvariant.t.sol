@@ -205,7 +205,8 @@ contract NodInvariantTest is StdInvariant, Test {
             timelockAddr,
             admin,
             pauser,
-            1000
+            1000,
+            fallbackAddr
         );
 
         vm.prank(admin);

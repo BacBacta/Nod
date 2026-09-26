@@ -88,12 +88,15 @@ NONE ──registerToken()──► PENDING ──accept()──► ACCEPTED ─
 - Foundry (`forge` + `cast`) installed
 - `lib/forge-std` and `lib/openzeppelin-contracts` present (run `forge install`)
 - All environment variables filled in (see `docs/env-example.md`)
+- Deployer key imported into an encrypted Foundry keystore (never a plain env var):
+  `cast wallet import nod-deployer --interactive`, then fund it from https://faucet.circle.com
 
 ### Run
 
 ```bash
 forge script contracts/script/DeployNod.s.sol \
   --rpc-url https://rpc.testnet.arc.io \
+  --account nod-deployer \
   --broadcast \
   --with-gas-price 20000000000 \
   -vvvv
@@ -113,7 +116,7 @@ The script executes these steps in one broadcast:
 5. Deploy `Registry` — deployer is temporary `DEFAULT_ADMIN`.
 6. Deploy `PayoutRouter`.
 7. Wire: `factory.setRegistry(registry)` + grant `PAYOUT_ROUTER_ROLE` to router.
-8. Whitelist `NOD_FALLBACK1` as the initial fallback recipient.
+8. Whitelist `NOD_FALLBACK1` as the initial fallback recipient (set in the `Registry` constructor).
 9. Hand `DEFAULT_ADMIN_ROLE` of all contracts to the timelock; deployer renounces.
 
 After the broadcast the deployer has **no remaining privileges** on any contract.

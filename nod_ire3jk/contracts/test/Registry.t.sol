@@ -73,7 +73,8 @@ contract RegistryTest is Test {
             timelockAddr,
             admin,
             pauser,
-            FEE_BPS
+            FEE_BPS,
+            fallbackAddr
         );
 
         // Wire factory → registry

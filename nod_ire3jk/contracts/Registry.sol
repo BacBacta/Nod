@@ -206,12 +206,14 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
         address _timelock,
         address admin,
         address pauser,
-        uint16  _protocolFeeBps
+        uint16  _protocolFeeBps,
+        address _initialFallback
     ) {
         if (
             _usdc == address(0) || _factory == address(0) || _attestor == address(0) ||
             _treasury == address(0) || _buybackModule == address(0) ||
-            _timelock == address(0) || admin == address(0) || pauser == address(0)
+            _timelock == address(0) || admin == address(0) || pauser == address(0) ||
+            _initialFallback == address(0)
         ) revert ZeroAddress();
         if (_protocolFeeBps > PROTOCOL_FEE_CAP) {
             revert ProtocolFeeExceedsCap(_protocolFeeBps, PROTOCOL_FEE_CAP);
@@ -224,6 +226,11 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
         buybackModule = _buybackModule;
         timelock      = _timelock;
         protocolFeeBps = _protocolFeeBps;
+
+        // setFallbackWhitelist is timelock-only, so the first fallback must be set
+        // here or no token could register until a 48h timelock op executes.
+        whitelistedFallback[_initialFallback] = true;
+        emit FallbackWhitelisted(_initialFallback, true);
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(PAUSER_ROLE, pauser);

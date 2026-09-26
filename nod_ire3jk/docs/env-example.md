@@ -3,8 +3,9 @@
 Copy these to a `.env` file in the project root and fill in every value before running the deploy script.
 
 ```bash
-# Deployer private key (hex, no 0x prefix)
-PRIVATE_KEY=
+# The deployer key is NOT set here. Import it into an encrypted Foundry keystore:
+#   cast wallet import nod-deployer --interactive
+# and pass `--account nod-deployer` to forge script.
 
 # Gnosis Safe (or EOA for testnet) — proposer + executor on the 48h timelock
 NOD_MULTISIG=
