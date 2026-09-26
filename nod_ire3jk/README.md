@@ -75,7 +75,7 @@ NONE ──registerToken()──► PENDING ──accept()──► ACCEPTED ─
 | Max claims pause | `Registry.CLAIM_PAUSE_MAX` | 72 hours | Immutable constant |
 | Rotation delay | `IdentityAttestor.ROTATION_DELAY` | 7 days | Immutable constant |
 | First-claim cooldown | `IdentityAttestor.FIRST_CLAIM_COOLDOWN` | 7 days | Immutable constant |
-| Deposit cap | `FeeVaultFactory.defaultDepositCap` | Deploy-time env var | Timelock |
+| Deposit cap | `FeeVaultFactory.defaultDepositCap` | Deploy-time env var | Timelock. Non-blocking: USDC above the cap stays in the vault uncounted (`DepositCapReached` event) and is counted once the cap is raised. |
 | Buyback schedule | `BuybackModule.scheduleInterval` | 7 days | Timelock |
 | Max buyback slippage | `BuybackModule.maxSlippageBps` | 100 bps (1%) | Timelock |
 
@@ -153,7 +153,7 @@ forge test -vv
 forge test --gas-report --no-match-test "invariant"
 ```
 
-151 tests total: 147 unit/fuzz + 4 invariant suites.
+155 tests total: 151 unit/fuzz + 4 invariant suites.
 
 ---
 

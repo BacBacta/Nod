@@ -97,12 +97,48 @@ contract FeeVaultTest is Test {
 
     // ─── Deposit cap ────────────────────────────────────────────────────────────
 
-    function test_DepositCap_ExceedingCapReverts() public {
-        usdc.mint(address(vault), CAP + 1);
-        vm.expectRevert(
-            abi.encodeWithSelector(FeeVault.DepositCapExceeded.selector, CAP, CAP + 1)
-        );
+    function test_DepositCap_CountsUpToCapWithoutReverting() public {
+        usdc.mint(address(vault), CAP + 5e6);
+        vm.expectEmit(true, false, false, true);
+        emit FeeVault.DepositCapReached(address(vault), CAP, 5e6);
         vault.notifyReceived();
+
+        assertEq(vault.totalReceived(), CAP);
+        assertEq(vault.availableBalance(), CAP); // excess is not distributable
+    }
+
+    function test_DepositCap_AtCapFurtherDepositsStayUncounted() public {
+        usdc.mint(address(vault), CAP);
+        vault.notifyReceived();
+        usdc.mint(address(vault), 7e6);
+        vault.notifyReceived(); // must not revert
+
+        assertEq(vault.totalReceived(), CAP);
+        assertEq(vault.availableBalance(), CAP);
+    }
+
+    function test_DepositCap_ExcessCountedAfterCapRaised() public {
+        usdc.mint(address(vault), CAP + 5e6);
+        vault.notifyReceived();
+
+        vm.prank(registry);
+        vault.setDepositCap(0);
+        vault.notifyReceived();
+
+        assertEq(vault.totalReceived(), CAP + 5e6);
+        assertEq(vault.availableBalance(), CAP + 5e6);
+    }
+
+    function test_DepositCap_ExcessNotSentOutByRegistry() public {
+        usdc.mint(address(vault), CAP + 5e6);
+        vault.notifyReceived();
+        uint256 avail = vault.availableBalance();
+
+        vm.prank(registry);
+        vault.transferOut(alice, avail, keccak256("TEST"));
+
+        assertEq(vault.availableBalance(), 0);
+        assertEq(usdc.balanceOf(address(vault)), 5e6); // excess still held
     }
 
     function test_DepositCap_ExactlyAtCapSucceeds() public {
@@ -280,6 +316,7 @@ contract FeeVaultTest is Test {
 
     function test_AvailableBalance_CorrectAfterCredit() public {
         usdc.mint(address(vault), 100e6);
+        vault.notifyReceived();
         vm.prank(registry);
         vault.credit(alice, 40e6); // locks 40 for alice
 

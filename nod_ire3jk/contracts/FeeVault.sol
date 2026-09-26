@@ -49,8 +49,6 @@ contract FeeVault is ReentrancyGuard {
     error InsufficientBalance(uint256 available, uint256 requested);
     /// @notice Recipient has insufficient accrued claimable balance.
     error InsufficientClaimable(uint256 available, uint256 requested);
-    /// @notice Deposit would exceed the per-vault beta cap.
-    error DepositCapExceeded(uint256 cap, uint256 wouldBe);
     /// @notice Zero-address argument where a non-zero address is required.
     error ZeroAddress();
 
@@ -58,6 +56,10 @@ contract FeeVault is ReentrancyGuard {
 
     /// @notice Emitted when a USDC deposit delta is recorded.
     event FeeReceived(address indexed vault, uint256 amount);
+
+    /// @notice Emitted when inbound USDC above the deposit cap is left uncounted.
+    ///         It stays in the vault and is counted once the cap is raised.
+    event DepositCapReached(address indexed vault, uint256 cap, uint256 uncounted);
 
     /// @notice Emitted when funds are transferred out by the Registry.
     event FundsTransferred(address indexed to, uint256 amount, bytes32 indexed reason);
@@ -162,7 +164,10 @@ contract FeeVault is ReentrancyGuard {
      *         fees received.
      *
      * @dev    `totalReceived` tracks cumulative inbound USDC and is derived from the
-     *         current balance plus all previously observed outflows.
+     *         current balance plus all previously observed outflows.  With a deposit
+     *         cap, only the amount up to the cap is counted; the rest stays in the
+     *         vault, is not distributable, and is counted on a later call once the cap
+     *         is raised.  This never reverts, so distribution is never blocked.
      */
     function notifyReceived() external nonReentrant {
         uint256 balance = USDC.balanceOf(address(this));
@@ -176,8 +181,12 @@ contract FeeVault is ReentrancyGuard {
             delta = currentGross - accounted;
         }
 
-        if (depositCap > 0 && totalReceived + delta > depositCap) {
-            revert DepositCapExceeded(depositCap, totalReceived + delta);
+        uint256 cap = depositCap;
+        if (cap > 0 && accounted + delta > cap) {
+            uint256 room = cap > accounted ? cap - accounted : 0;
+            emit DepositCapReached(address(this), cap, delta - room);
+            if (room == 0) return;
+            delta = room;
         }
 
         totalReceived += delta;
@@ -247,12 +256,18 @@ contract FeeVault is ReentrancyGuard {
     // ─── View helpers ────────────────────────────────────────────────────────────
 
     /**
-     * @notice Current uncommitted USDC balance in this vault (ERC-20 view).
+     * @notice USDC counted by `notifyReceived` and not yet credited or sent out.
+     *         Funds above the deposit cap (uncounted) are excluded.
      */
     function availableBalance() external view returns (uint256) {
+        uint256 committed = totalCredited + totalDirectOut;
+        uint256 counted = totalReceived > committed ? totalReceived - committed : 0;
+
+        // Never report more than is physically held beyond recipients' claims.
         uint256 lockedForRecipients = totalCredited - totalWithdrawn;
         uint256 balance = USDC.balanceOf(address(this));
-        return balance > lockedForRecipients ? balance - lockedForRecipients : 0;
+        uint256 held = balance > lockedForRecipients ? balance - lockedForRecipients : 0;
+        return counted < held ? counted : held;
     }
 
     // ─── Native ETH / USDC rejection ─────────────────────────────────────────────

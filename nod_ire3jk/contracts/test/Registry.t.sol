@@ -894,6 +894,21 @@ contract RegistryTest is Test {
         assertEq(registry.reservedOf(launchToken, 1), 100e6);
     }
 
+    function test_DepositCap_DistributesOnlyUpToCap() public {
+        FeeVault vault = FeeVault(payable(_registerAndAccept(launchToken, _makeSplits1(recipient1))));
+        vm.prank(recipient1);
+        registry.acceptSplit(launchToken, 0);
+
+        uint256 cap = vault.depositCap();
+        usdc.mint(address(vault), cap + 10e6);
+        registry.distributeIncoming(launchToken); // must not revert
+        registry.distributeIncoming(launchToken);
+
+        assertEq(vault.claimable(recipient1), cap * 9 / 10);
+        assertEq(usdc.balanceOf(treasury) + usdc.balanceOf(buyback), cap / 10);
+        assertEq(usdc.balanceOf(address(vault)), cap * 9 / 10 + 10e6); // claims + excess
+    }
+
     // ─── Helper ─────────────────────────────────────────────────────────────────
     function alice() internal pure returns (address) {
         return address(uint160(uint256(keccak256("alice"))));
