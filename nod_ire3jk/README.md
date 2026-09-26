@@ -160,7 +160,8 @@ forge test --gas-report --no-match-test "invariant"
 ## Frontend (`frontend/`)
 
 Vite + React + wagmi/viem app to look up a token, accept or refuse it as the creator,
-accept a split, claim USDC and register a new token. Chains: Arc Testnet (viem's
+accept a split, claim USDC, register a new token, and verify a creator identity (link an
+X, Farcaster, GitHub, TikTok or Reddit account to the wallet via the attestation service). Chains: Arc Testnet (viem's
 `arcTestnet`) and a local anvil node. USDC is always shown as one balance in the
 6-decimal ERC-20 view.
 
@@ -168,10 +169,13 @@ accept a split, claim USDC and register a new token. Chains: Arc Testnet (viem's
 # 1. Local chain + contracts + a seeded demo token (anvil, chain 31337)
 ./scripts/dev-local.sh
 
-# 2. App (http://localhost:5173) — connect "Compte anvil #1" (creator) or "#2"
+# 2. Attestation service with simulated OAuth (http://localhost:8787)
+./scripts/dev-attestation.sh
+
+# 3. App (http://localhost:5173) — connect "Compte anvil #1" (creator) or "#2"
 cd frontend && bun install && bun run dev
 
-# 3. End-to-end tests against the running app (needs a freshly seeded chain)
+# 4. End-to-end tests against the running app (needs a freshly seeded chain)
 bun run test:e2e
 ```
 

@@ -5,11 +5,14 @@ import { deploymentFor } from "./deployments";
 import { short, usdc } from "./format";
 import { RegisterToken } from "./RegisterToken";
 import { TokenPanel } from "./TokenPanel";
+import { VerifyIdentity, readReturn } from "./VerifyIdentity";
 
 export function App() {
   const chainId = useChainId();
   const d = deploymentFor(chainId);
-  const [tab, setTab] = useState<"token" | "register">("token");
+  // Back from an OAuth provider: resume the verification (read once, then cleared from the URL).
+  const [resume] = useState(readReturn);
+  const [tab, setTab] = useState<"token" | "register" | "verify">(resume ? "verify" : "token");
   const [input, setInput] = useState("");
   const token = isAddress(input) ? (input as Address) : undefined;
 
@@ -41,8 +44,11 @@ export function App() {
             <nav className="tabs">
               <button className={tab === "token" ? "active" : ""} onClick={() => setTab("token")}>Consulter un token</button>
               <button className={tab === "register" ? "active" : ""} onClick={() => setTab("register")}>Enregistrer un token</button>
+              <button className={tab === "verify" ? "active" : ""} onClick={() => setTab("verify")}>Vérifier mon identité</button>
             </nav>
-            {tab === "token" ? (
+            {tab === "verify" ? (
+              <VerifyIdentity d={d} resume={resume} />
+            ) : tab === "token" ? (
               <>
                 <label className="lookup">
                   Adresse du token

@@ -10,13 +10,39 @@ const ANVIL_ACCOUNTS = [
   "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
 ] as const;
 
+// Remembers the connected anvil account so it reconnects after a full-page redirect
+// (identity OAuth); the mock connector itself forgets on reload.
+const DEV_ACCOUNT_KEY = "nod.anvilAccount";
+const devStore = {
+  get: () => { try { return localStorage.getItem(DEV_ACCOUNT_KEY); } catch { return null; } },
+  set: (v: string | null) => {
+    try { if (v) localStorage.setItem(DEV_ACCOUNT_KEY, v); else localStorage.removeItem(DEV_ACCOUNT_KEY); } catch { /* ignore */ }
+  },
+};
+
 function anvilAccount(account: (typeof ANVIL_ACCOUNTS)[number], n: number) {
   const base = mock({ accounts: [account], features: { reconnect: true } });
-  return createConnector((config) => ({
-    ...base(config),
-    id: `anvil-${n}`,
-    name: `Compte anvil #${n} (local)`,
-  }));
+  const id = `anvil-${n}`;
+  return createConnector((config) => {
+    const c = base(config);
+    return {
+      ...c,
+      id,
+      name: `Compte anvil #${n} (local)`,
+      async connect(params) {
+        const result = await c.connect.call(this, params);
+        devStore.set(id);
+        return result;
+      },
+      async disconnect() {
+        if (devStore.get() === id) devStore.set(null);
+        return c.disconnect.call(this);
+      },
+      async isAuthorized() {
+        return devStore.get() === id;
+      },
+    } as typeof c;
+  });
 }
 
 export const config = createConfig({
