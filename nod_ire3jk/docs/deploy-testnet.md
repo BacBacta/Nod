@@ -35,9 +35,10 @@ NOD_DEMO_LAUNCHPAD=true forge script contracts/script/DeployNod.s.sol \
 ```
 
 The script deploys the six contracts and, with the flag set, the demo launchpad. It
-hands every admin role to the timelock; the deployer keeps none. It then writes all
-addresses to `frontend/src/deployments/5042002.json`, which the frontend reads. Commit
-that file.
+hands every admin role to the timelock; the deployer keeps none. Only a real
+`--broadcast` run writes the addresses to `frontend/src/deployments/5042002.json`, which
+the frontend reads; a dry run leaves the file unchanged. Check the transactions on the
+explorer, then commit that file.
 
 ## 3. Admin operations through the 48h timelock
 
@@ -58,8 +59,10 @@ Optional variables:
 - `NOD_REGISTRY_KEEPER` grants `KEEPER_ROLE` on the Registry.
 - `NOD_TIMELOCK_SALT` is needed for a second batch.
 
-With a Safe multisig, run the script without `--broadcast` and submit the printed
-targets and payloads with the Safe transaction builder.
+With a Safe multisig, run `MODE=print forge script contracts/script/TimelockOps.s.sol
+--rpc-url https://rpc.testnet.arc.io`. It sends nothing and prints the timelock address,
+the salt, the delay, and the `scheduleBatch` and `executeBatch` calldata. Submit them
+from the Safe, the second one after the delay.
 
 ## 4. Attestation service and frontend
 
@@ -75,5 +78,12 @@ targets and payloads with the Safe transaction builder.
   returns `true` after step 3.
 - For each contract, `hasRole(DEFAULT_ADMIN_ROLE, <deployer>)` returns `false`, and
   `hasRole(DEFAULT_ADMIN_ROLE, <timelock>)` returns `true`.
-- In the app: verify an identity, register a demo token (set its fee recipient on the
-  demo launchpad to the predicted vault first), accept it, and claim.
+- In the app: verify an identity, register a demo token, accept it, and claim. The demo
+  adapter requires the token's fee recipient to be the predicted vault and locked, so
+  first run:
+
+  ```bash
+  PAD=<launchpad from the JSON>; TOKEN=<demo token>; VAULT=<predicted vault shown in the form>
+  cast send $PAD "setFeeRecipient(address,address)" $TOKEN $VAULT --account <any funded key> --rpc-url https://rpc.testnet.arc.io
+  cast send $PAD "setLocked(address,bool)" $TOKEN true --account <any funded key> --rpc-url https://rpc.testnet.arc.io
+  ```

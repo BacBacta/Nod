@@ -15,8 +15,9 @@ import {Registry} from "../Registry.sol";
  *           - grantRole(KEEPER_ROLE, NOD_REGISTRY_KEEPER)   if set
  *
  *         Must be broadcast by the timelock's proposer/executor (NOD_MULTISIG). With an
- *         EOA multisig (testnet) run it with --account; with a Safe, use the printed
- *         targets/payloads in the Safe transaction builder instead.
+ *         EOA multisig (testnet) run it with --account. With a Safe, run with
+ *         MODE=print: it sends nothing and prints the scheduleBatch and executeBatch
+ *         calls (target = timelock) to submit from the Safe.
  *
  *         Addresses default to frontend/src/deployments/<chainId>.json written by
  *         DeployNod; "adapter" from that file is used when NOD_ADAPTERS is unset.
@@ -48,6 +49,19 @@ contract TimelockOps is Script {
         console2.log("operation id:");
         console2.logBytes32(id);
 
+        if (keccak256(bytes(mode)) == keccak256("print")) {
+            uint256 delay = timelock.getMinDelay();
+            console2.log("Safe transactions (to the timelock):", address(timelock));
+            console2.log("salt:");
+            console2.logBytes32(salt);
+            console2.log("delay (s):", delay);
+            console2.log("1) scheduleBatch calldata:");
+            console2.logBytes(abi.encodeCall(TimelockController.scheduleBatch, (targets, values, payloads, bytes32(0), salt, delay)));
+            console2.log("2) after the delay, executeBatch calldata:");
+            console2.logBytes(abi.encodeCall(TimelockController.executeBatch, (targets, values, payloads, bytes32(0), salt)));
+            return;
+        }
+
         vm.startBroadcast();
         if (keccak256(bytes(mode)) == keccak256("schedule")) {
             require(!timelock.isOperation(id), "TimelockOps: already scheduled (change NOD_TIMELOCK_SALT for a new batch)");
@@ -58,7 +72,7 @@ contract TimelockOps is Script {
             timelock.executeBatch(targets, values, payloads, bytes32(0), salt);
             console2.log("Executed.");
         } else {
-            revert("TimelockOps: MODE must be schedule or execute");
+            revert("TimelockOps: MODE must be schedule, execute or print");
         }
         vm.stopBroadcast();
     }

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {Script, console2} from "forge-std/Script.sol";
+import {VmSafe} from "forge-std/Vm.sol";
 
 import {NodTimelockController} from "../NodTimelockController.sol";
 import {FeeVaultFactory}       from "../FeeVaultFactory.sol";
@@ -264,8 +265,14 @@ contract DeployNod is Script {
             vm.serializeAddress(o, "adapter", address(demoAdapter));
         }
         string memory json = vm.serializeAddress(o, "registry", address(registry));
-        vm.writeJson(json, "./frontend/src/deployments/5042002.json");
-        console2.log("Addresses written to frontend/src/deployments/5042002.json");
+        // Only a real broadcast writes the file: a dry run's addresses were never
+        // deployed and would overwrite the committed ones.
+        if (vm.isContext(VmSafe.ForgeContext.ScriptBroadcast)) {
+            vm.writeJson(json, "./frontend/src/deployments/5042002.json");
+            console2.log("Addresses written to frontend/src/deployments/5042002.json");
+        } else {
+            console2.log("Dry run: frontend/src/deployments/5042002.json left unchanged");
+        }
 
         //  Summary 
         console2.log("");
