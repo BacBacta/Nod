@@ -121,6 +121,9 @@ The script executes these steps in one broadcast:
 
 After the broadcast the deployer has **no remaining privileges** on any contract.
 
+Step-by-step runbook, including the demo launchpad and the timelock operations
+(`contracts/script/TimelockOps.s.sol`): `docs/deploy-testnet.md`.
+
 ### Post-deploy checklist (via multisig + 48h timelock)
 
 1. `registry.setAdapterWhitelist(<BullcheeseAdapter>, true)` — enable Bullcheese.
