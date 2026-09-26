@@ -1,1 +1,0 @@
-{"root":["./src/App.tsx","./src/RegisterToken.tsx","./src/TokenPanel.tsx","./src/TxNotice.tsx","./src/format.ts","./src/main.tsx","./src/useTx.ts","./src/wagmi.ts","./src/abi/FeeVault.ts","./src/abi/FeeVaultFactory.ts","./src/abi/IdentityAttestor.ts","./src/abi/PayoutRouter.ts","./src/abi/Registry.ts","./src/deployments/index.ts"],"version":"5.8.3"}
