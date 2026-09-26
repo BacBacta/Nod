@@ -56,7 +56,7 @@ NONE ──registerToken()──► PENDING ──accept()──► ACCEPTED ─
 |---|---|---|
 | PENDING | any | Accumulates in vault (no distribution) |
 | ACCEPTED | ACCEPTED | Recipient (minus 10% protocol fee) |
-| ACCEPTED | PENDING | Accumulates in vault |
+| ACCEPTED | PENDING | Held in vault for that recipient (`reservedOf`); released on accept (credited, minus fee), refuse (fallback), expiry (50/50) or token refusal (fallback) |
 | ACCEPTED | REFUSED | `fallbackRecipient` |
 | ACCEPTED | EXPIRED | 50% treasury / 50% BuybackModule |
 | REFUSED | any | `fallbackRecipient` |
@@ -149,7 +149,7 @@ forge test -vv
 forge test --gas-report --no-match-test "invariant"
 ```
 
-143 tests total: 139 unit/fuzz + 4 invariant suites.
+149 tests total: 145 unit/fuzz + 4 invariant suites.
 
 ---
 
