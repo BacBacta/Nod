@@ -23,6 +23,8 @@ export type IdentityState = {
 export interface Chain {
   chainId: number;
   identityState(creatorId: Hex): Promise<IdentityState>;
+  /** Latest block timestamp (seconds): the contract checks expiry against chain time. */
+  latestTimestamp(): Promise<number>;
   /** EOA and smart-account (ERC-1271 / ERC-6492) signatures. */
   verifyWalletSignature(wallet: Address, message: string, signature: Hex): Promise<boolean>;
 }
@@ -37,6 +39,9 @@ export function viemChain(rpcUrl: string, chainId: number, attestor: Address): C
         client.readContract({ address: attestor, abi: attestorAbi, functionName: "platformOf", args: [creatorId] }),
       ]);
       return { wallet: rec[0] ?? zeroAddress, platform, revoked: rec[5] };
+    },
+    async latestTimestamp() {
+      return Number((await client.getBlock()).timestamp);
     },
     verifyWalletSignature(wallet, message, signature) {
       return client.verifyMessage({ address: wallet, message, signature });

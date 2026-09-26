@@ -13,9 +13,10 @@ export const ATTESTOR = "0x00000000000000000000000000000000000a7e57" as Address;
 export const FRONTEND = "https://app.nod.test";
 export const PUBLIC = "https://attest.nod.test";
 
-export function fakeChain(states: Record<string, Partial<IdentityState>> = {}): Chain {
+export function fakeChain(states: Record<string, Partial<IdentityState>> = {}, chainTime = 0): Chain {
   return {
     chainId: 5042002,
+    latestTimestamp: async () => chainTime,
     async identityState(id) {
       return { wallet: zeroAddress, platform: zeroHash, revoked: false, ...states[id] };
     },

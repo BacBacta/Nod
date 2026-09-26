@@ -193,7 +193,9 @@ export function createApp(deps: AppDeps) {
 
     // A new wallet for an existing identity goes through the 7-day rotation.
     const mode = onchain.wallet === zeroAddress || onchain.wallet === s.wallet ? "attest" : "initiateRotation";
-    const expiry = Math.floor(now() / 1000) + attestationTtl;
+    // The contract compares expiry with block.timestamp: never start from a clock that is behind the chain.
+    const chainNow = await deps.chain.latestTimestamp();
+    const expiry = Math.max(Math.floor(now() / 1000), chainNow) + attestationTtl;
     const nonce = bytesToHex(random(32));
     const signature = await deps.signer.sign(
       { platform: tag, platformUserId: creatorId, wallet: s.wallet, expiry, nonce },

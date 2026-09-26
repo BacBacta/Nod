@@ -31,8 +31,10 @@ frontend                          service                                 chain
   `initiateRotation` signature instead of `attest`: the new wallet becomes active only
   after the contract's 7-day delay. The contract rejects `attest` for a different
   wallet, so a hijacked social account cannot redirect fees instantly.
-- Sessions last 15 minutes and are single use. Attestation signatures expire after 30
-  minutes and carry a random nonce, which the contract marks as used.
+- Sessions last 15 minutes and are single use. Attestation signatures expire 30 minutes
+  after the later of server time and the latest block time, since the contract checks
+  expiry against `block.timestamp`. Each carries a random nonce, which the contract
+  marks as used.
 
 ## Platforms
 
@@ -54,6 +56,13 @@ cp .env.example .env   # fill it in
 bun install
 bun run start          # or: bun run dev
 ```
+
+## Local development
+
+`../scripts/dev-attestation.sh` runs the service against the anvil stack from
+`../scripts/dev-local.sh`. It sets `DEV_FAKE_OAUTH=true`, which replaces X, GitHub,
+TikTok and Reddit with a simulated consent page where you type any account id. The
+server refuses this option unless `CHAIN_ID=31337`.
 
 ## Tests
 

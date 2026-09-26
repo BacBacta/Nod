@@ -154,6 +154,15 @@ describe("attestation flow", () => {
     }
   });
 
+  it("attestation expiry follows chain time when the chain is ahead of the server clock", async () => {
+    const chainNow = 1_800_000_000 + 7 * 86_400; // server clock is 1_800_000_000 s
+    const { app } = makeApp({ oauth: { github: fakeGithub() }, chain: fakeChain({}, chainNow) });
+    const { sessionId } = await verifiedSession(app);
+    await oauthRoundTrip(app, sessionId);
+    const res = await post(app, `/v1/sessions/${sessionId}/attestation`, {});
+    expect(res.body.args[3]).toBe(chainNow + 30 * 60);
+  });
+
   it("sessions expire", async () => {
     const { app, advance } = makeApp();
     const start = await post(app, "/v1/sessions", { wallet: USER.address });
