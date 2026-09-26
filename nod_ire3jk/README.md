@@ -153,7 +153,34 @@ forge test -vv
 forge test --gas-report --no-match-test "invariant"
 ```
 
-155 tests total: 151 unit/fuzz + 4 invariant suites.
+157 tests total: 153 unit/fuzz + 4 invariant suites.
+
+---
+
+## Frontend (`frontend/`)
+
+Vite + React + wagmi/viem app to look up a token, accept or refuse it as the creator,
+accept a split, claim USDC and register a new token. Chains: Arc Testnet (viem's
+`arcTestnet`) and a local anvil node. USDC is always shown as one balance in the
+6-decimal ERC-20 view.
+
+```bash
+# 1. Local chain + contracts + a seeded demo token (anvil, chain 31337)
+./scripts/dev-local.sh
+
+# 2. App (http://localhost:5173) — connect "Compte anvil #1" (creator) or "#2"
+cd frontend && bun install && bun run dev
+
+# 3. End-to-end tests against the running app (needs a freshly seeded chain)
+bun run test:e2e
+```
+
+`scripts/dev-local.sh` runs `contracts/script/DevLocal.s.sol` (local only: the deployer
+acts as the timelock and anvil's public keys are used), skips the 7-day first-claim
+cooldown, writes addresses to `frontend/src/deployments/31337.json` and regenerates
+`frontend/src/abi/`. After the Arc Testnet deployment, fill
+`frontend/src/deployments/5042002.json` with the `DeployNod` addresses
+(`usdc`, `registry`, `payoutRouter`, `attestor`, `factory`, plus `adapter` and `fallback`).
 
 ---
 
@@ -177,5 +204,5 @@ Human auditors should focus on:
 
 - **AdvanceVault** — fee-stream advances (priority claimant on a FeeVault's stream).
   Storage and interfaces are designed to be compatible with this addition.
-- Frontend / indexer / notifications.
+- Indexer / notifications.
 - Mainnet deployment.
