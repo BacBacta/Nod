@@ -118,7 +118,7 @@ contract DeployNod is Script {
         uint256 deployerPrivKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivKey);
 
-        console2.log("=== Nod Protocol Deployment — Arc Testnet ===");
+        console2.log("=== Nod Protocol Deployment - Arc Testnet ===");
         console2.log("Deployer:  ", deployer);
         console2.log("Multisig:  ", multisig);
         console2.log("Treasury:  ", treasury);
