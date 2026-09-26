@@ -17,7 +17,7 @@ and explicitly accepted the token.
 | `FeeVaultFactory` | `FeeVaultFactory.sol` | Deploys one `FeeVault` per token via CREATE2. Salt = `keccak256(deployer, nonce)` — vault address is computable before the token exists. |
 | `FeeVault` | `FeeVault.sol` | Non-upgradeable, per-token USDC vault. Uses accrual accounting (ERC-20 only — `address(this).balance` is never read). `receive()` accepts native USDC (same pool as the ERC-20 view), so launchpads may pay fees either way. |
 | `ILaunchpadAdapter` | `ILaunchpadAdapter.sol` | Interface every launchpad adapter must implement: `verifyFeeRecipient(token, vault)`. |
-| `BullcheeseAdapter` | `BullcheeseAdapter.sol` | Adapter for the Bullcheese launchpad. Checks that the fee recipient equals the vault AND that the fee recipient is immutably locked. |
+| `BullcheeseAdapter` | `BullcheeseAdapter.sol` | Adapter for Bullcheese (Team Finance MintPlus) on Arc. Bullcheese pays creator fees to the owner of each token's LP locker, so the vault becomes that owner (see "Bullcheese integration"). |
 | `IdentityAttestor` | `IdentityAttestor.sol` | EIP-712 identity registry. Maps immutable `platformUserId` (bytes32, never a handle) to a wallet address. Enforces 7-day rotation delay and 7-day first-claim cooldown. |
 | `Registry` | `Registry.sol` | Core state machine. Manages token states (PENDING → ACCEPTED/REFUSED/EXPIRED), per-recipient sub-states, splits routing, protocol fee deduction, and expiry logic. |
 | `PayoutRouter` | `PayoutRouter.sol` | Pull-based claim interface. Verified wallets call `claim(token, splitIndex)`. Supports a per-wallet payout override and gas-bounded `batchClaim`. |
@@ -153,7 +153,8 @@ forge test -vv
 forge test --gas-report --no-match-test "invariant"
 ```
 
-161 tests total: 157 unit/fuzz + 4 invariant suites.
+175 tests total: 170 unit/fuzz + 4 invariant suites + 1 Arc mainnet fork test (skipped
+unless `ARC_MAINNET_RPC` is set).
 
 ---
 
@@ -185,6 +186,43 @@ cooldown, writes addresses to `frontend/src/deployments/31337.json` and regenera
 `frontend/src/abi/`. After the Arc Testnet deployment, fill
 `frontend/src/deployments/5042002.json` with the `DeployNod` addresses
 (`usdc`, `registry`, `payoutRouter`, `attestor`, `factory`, plus `adapter` and `fallback`).
+
+---
+
+## Bullcheese integration
+
+Bullcheese has no fee-recipient field. Each token's LP position sits in a per-token
+locker (Ownable2Step), and `collectFees()` pays the creator share (75% of the 1% swap
+fee) to the locker's owner. Fees come in both pool tokens: USDC on buys, the token itself
+on sells.
+
+1. The creator calls `locker.transferOwnership(predictedVault)`, using
+   `FeeVaultFactory.predictVaultAddress(creator, token)`.
+2. The creator calls `registerToken(...)` with the `BullcheeseAdapter`. The Registry
+   deploys the vault, makes it `acceptOwnership()` of the locker, and checks that the
+   vault owns it and that the pool pairs the token with USDC.
+3. Anyone calls `Registry.collectFees(token)`. The USDC share is distributed like any
+   other fees, and the token share waits in the vault.
+4. A `KEEPER_ROLE` holder calls `swapTokenFees(token, amountIn, minUsdcOut)`. The swap
+   goes through Uniswap SwapRouter02, and `minUsdcOut` must be at least the 10-minute
+   TWAP value minus 3%. Call `prepareSwapOracle(token, n)` once to grow the pool's
+   price history.
+
+The vault only ever calls `acceptOwnership()` and `collectFees()` on the locker. It never
+withdraws, transfers or renounces, so the liquidity stays locked for good.
+
+Arc mainnet addresses: MintPlus `0x16D4c13aD2A23288AA9b9384F24084edC8CBeF41`,
+SwapRouter02 `0x53BF6B0684Ec7eF91e1387Da3D1a1769bC5A6F77`. Bullcheese is not deployed on
+Arc Testnet.
+
+`contracts/test/fork/BullcheeseFork.t.sol` runs this flow against the real contracts on
+an Arc mainnet fork, with real swaps through Uniswap. Only USDC is simulated there,
+because Arc's USDC moves balances through a native precompile that Foundry's EVM does
+not implement:
+
+```bash
+ARC_MAINNET_RPC=https://rpc.mainnet.arc.io FOUNDRY_PROFILE=fork forge test --match-path "contracts/test/fork/*"
+```
 
 ---
 

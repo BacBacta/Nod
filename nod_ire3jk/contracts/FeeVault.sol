@@ -4,6 +4,13 @@ pragma solidity ^0.8.24;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {ISwapRouter02} from "./external/IUniswapV3.sol";
+
+/// @notice Pull-model fee source (e.g. a Bullcheese LP locker): Ownable2Step + owner-only collect.
+interface IFeeSource {
+    function acceptOwnership() external;
+    function collectFees() external;
+}
 
 /**
  * @title  FeeVault
@@ -43,6 +50,9 @@ contract FeeVault is ReentrancyGuard {
 
     /// @notice Call with calldata that matches no function.
     error UnsupportedCall();
+    /// @notice The fee source is already set, or none is set.
+    error FeeSourceAlreadySet();
+    error NoFeeSource();
     /// @notice Caller is not the authorised Registry.
     error NotRegistry();
     /// @notice Transfer amount exceeds the vault's current ERC-20 balance.
@@ -60,6 +70,12 @@ contract FeeVault is ReentrancyGuard {
     /// @notice Emitted when inbound USDC above the deposit cap is left uncounted.
     ///         It stays in the vault and is counted once the cap is raised.
     event DepositCapReached(address indexed vault, uint256 cap, uint256 uncounted);
+
+    /// @notice Emitted when the vault takes ownership of its pull-model fee source.
+    event FeeSourceAccepted(address indexed source);
+
+    /// @notice Emitted when token-denominated fees are swapped to USDC.
+    event TokenFeesSwapped(uint256 tokenIn, uint256 usdcOut);
 
     /// @notice Emitted when funds are transferred out by the Registry.
     event FundsTransferred(address indexed to, uint256 amount, bytes32 indexed reason);
@@ -107,6 +123,14 @@ contract FeeVault is ReentrancyGuard {
      *         Do not read or write this from any current code path.
      */
     address public priorityClaimHook; // reserved — always address(0) for now
+
+    /**
+     * @notice Pull-model fee source this vault owns (e.g. the token's Bullcheese LP
+     *         locker), or address(0). Set once. The vault only ever calls
+     *         `acceptOwnership()` and `collectFees()` on it: it never withdraws,
+     *         transfers or renounces, so the locked liquidity stays locked.
+     */
+    address public feeSource;
 
     // ─── Constructor ─────────────────────────────────────────────────────────────
 
@@ -251,6 +275,57 @@ contract FeeVault is ReentrancyGuard {
 
         USDC.safeTransfer(to, amount);
         emit FundsTransferred(to, amount, reason);
+    }
+
+    // ─── Pull-model fee source ───────────────────────────────────────────────────
+
+    /**
+     * @notice Accept ownership of `source` (two-step transfer started by its current
+     *         owner). Only the Registry, once, at registration.
+     */
+    function acceptFeeSource(address source) external onlyRegistry {
+        if (source == address(0)) revert ZeroAddress();
+        if (feeSource != address(0)) revert FeeSourceAlreadySet();
+        feeSource = source;
+        IFeeSource(source).acceptOwnership();
+        emit FeeSourceAccepted(source);
+    }
+
+    /**
+     * @notice Pull the owner's share of fees from the fee source into this vault.
+     *         Permissionless: the fees can only land here. USDC is then picked up by
+     *         `notifyReceived`; fees paid in `token` wait for `swapTokenFees`.
+     */
+    function collectFromSource() external nonReentrant {
+        address source = feeSource;
+        if (source == address(0)) revert NoFeeSource();
+        IFeeSource(source).collectFees();
+    }
+
+    /**
+     * @notice Swap `amountIn` of `token` held by this vault into USDC via a Uniswap v3
+     *         router. Only the Registry, which enforces the price bound (TWAP).
+     * @return usdcOut USDC received; counted by the next `notifyReceived`.
+     */
+    function swapTokenFees(address router, uint24 fee, uint256 amountIn, uint256 minUsdcOut)
+        external
+        nonReentrant
+        onlyRegistry
+        returns (uint256 usdcOut)
+    {
+        IERC20 tokenIn = IERC20(token);
+        tokenIn.forceApprove(router, amountIn);
+        usdcOut = ISwapRouter02(router).exactInputSingle(ISwapRouter02.ExactInputSingleParams({
+            tokenIn: token,
+            tokenOut: address(USDC),
+            fee: fee,
+            recipient: address(this),
+            amountIn: amountIn,
+            amountOutMinimum: minUsdcOut,
+            sqrtPriceLimitX96: 0
+        }));
+        tokenIn.forceApprove(router, 0);
+        emit TokenFeesSwapped(amountIn, usdcOut);
     }
 
     // ─── View helpers ────────────────────────────────────────────────────────────

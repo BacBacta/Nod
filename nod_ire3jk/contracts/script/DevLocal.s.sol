@@ -8,7 +8,7 @@ import {IdentityAttestor}  from "../IdentityAttestor.sol";
 import {Registry}          from "../Registry.sol";
 import {PayoutRouter}      from "../PayoutRouter.sol";
 import {BuybackModule}     from "../BuybackModule.sol";
-import {BullcheeseAdapter} from "../BullcheeseAdapter.sol";
+import {MockLaunchpadAdapter} from "../test-helpers/MockLaunchpadAdapter.sol";
 import {MockERC20}         from "../test-helpers/MockERC20.sol";
 import {MockLaunchpad}     from "../test-helpers/MockLaunchpad.sol";
 
@@ -50,7 +50,7 @@ contract DevLocal is Script {
 
         MockERC20 usdc = new MockERC20("USD Coin (mock)", "USDC", 6);
         MockLaunchpad launchpad = new MockLaunchpad();
-        BullcheeseAdapter adapter = new BullcheeseAdapter(address(launchpad));
+        MockLaunchpadAdapter adapter = new MockLaunchpadAdapter(address(launchpad));
 
         FeeVaultFactory factory = new FeeVaultFactory(dev, address(usdc), 0);
         IdentityAttestor attestor = new IdentityAttestor(dev, dev, dev);

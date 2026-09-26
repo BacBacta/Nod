@@ -6,7 +6,7 @@
 |---|---|---|
 | NodTimelockController | contracts/NodTimelockController.sol | OZ TimelockController wrapper, 48h min delay. DEFAULT_ADMIN of all contracts after bootstrap. |
 | ILaunchpadAdapter | contracts/ILaunchpadAdapter.sol | Interface: verifyFeeRecipient(token, vault) |
-| BullcheeseAdapter | contracts/BullcheeseAdapter.sol | Bullcheese launchpad adapter stub (verifies fee recipient + immutability lock) |
+| BullcheeseAdapter | contracts/BullcheeseAdapter.sol | Bullcheese (MintPlus) adapter: vault owns the per-token LP locker (Ownable2Step), collects fees; token-side fees swapped to USDC by KEEPER under a 10-min TWAP -3% bound. |
 | FeeVault | contracts/FeeVault.sol | Per-token non-upgradeable USDC vault. ERC-20-only accounting; receive() accepts native USDC (same pool, counted via balanceOf). Accrual ledger: credit() / withdrawFor(). |
 | FeeVaultFactory | contracts/FeeVaultFactory.sol | CREATE2 factory. Salt = keccak256(deployer, nonce). admin-gated setRegistry. predictVaultAddress(deployer, token) requires real token arg. |
 | IdentityAttestor | contracts/IdentityAttestor.sol | EIP-712 attestations keyed by creatorId = creatorIdOf(keccak256(platform), externalId); id bound to its platform. attest = first wallet or same wallet only; wallet changes via 7-day rotation. First-claim cooldown, replay protection. Signed by attestation-service/. |
