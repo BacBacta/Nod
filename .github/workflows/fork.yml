@@ -1,0 +1,25 @@
+name: Arc mainnet fork
+
+# Runs the Bullcheese integration against the real contracts on an Arc mainnet fork.
+# Depends on a public RPC serving historical state, so it is kept out of the PR CI.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  bullcheese-fork:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: nod_ire3jk
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: forge test --match-path "contracts/test/fork/*" -vv
+        env:
+          FOUNDRY_PROFILE: fork
+          ARC_MAINNET_RPC: https://rpc.mainnet.arc.io
