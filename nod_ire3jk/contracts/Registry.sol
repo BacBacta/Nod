@@ -1057,6 +1057,7 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
      */
     function _distributeAccruedFees(address token, TokenRecord storage rec) internal {
         FeeVault vault = FeeVault(payable(rec.vault));
+        vault.notifyReceived(); // count fees that arrived since the last snapshot
         uint256 available = _distributable(rec, vault);
         if (available == 0) return;
         _distributeAccepted(token, rec, vault, available);
@@ -1073,6 +1074,7 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
     ) internal {
         // Re-run full distribution — simpler and safer than partial distribution
         FeeVault vault = FeeVault(payable(rec.vault));
+        vault.notifyReceived(); // count fees that arrived since the last snapshot
         uint256 available = _distributable(rec, vault);
         if (available == 0) return;
         _distributeAccepted(token, rec, vault, available);

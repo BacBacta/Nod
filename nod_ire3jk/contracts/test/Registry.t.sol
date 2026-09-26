@@ -894,6 +894,27 @@ contract RegistryTest is Test {
         assertEq(registry.reservedOf(launchToken, 1), 100e6);
     }
 
+    function test_Accept_CountsFeesReceivedAfterRegistration() public {
+        FeeVault vault = FeeVault(payable(_registerToken(launchToken, _makeSplits2(recipient1, recipient2))));
+        usdc.mint(address(vault), 1_000e6); // arrives after registerToken's snapshot
+
+        vm.prank(creatorWallet);
+        registry.accept(launchToken);
+
+        assertEq(registry.reservedOf(launchToken, 0), 500e6);
+        assertEq(registry.reservedOf(launchToken, 1), 500e6);
+    }
+
+    function test_AcceptSplit_CountsFeesReceivedSinceLastSnapshot() public {
+        FeeVault vault = FeeVault(payable(_registerAndAccept(launchToken, _makeSplits1(recipient1))));
+        usdc.mint(address(vault), 100e6);
+
+        vm.prank(recipient1);
+        registry.acceptSplit(launchToken, 0);
+
+        assertEq(vault.claimable(recipient1), 90e6);
+    }
+
     function test_DepositCap_DistributesOnlyUpToCap() public {
         FeeVault vault = FeeVault(payable(_registerAndAccept(launchToken, _makeSplits1(recipient1))));
         vm.prank(recipient1);
