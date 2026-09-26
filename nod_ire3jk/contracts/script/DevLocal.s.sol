@@ -38,8 +38,9 @@ contract DevLocal is Script {
     address internal constant FALLBACK = 0x90F79bf6EB2c4f870365E785982E1f101E93b906;
     address internal constant TREASURY = 0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65;
 
-    bytes32 internal constant PLATFORM   = keccak256("x.com");
-    bytes32 internal constant CREATOR_ID = keccak256("demo-creator");
+    // Canonical ids, as issued by attestation-service: creatorId = creatorIdOf(platform, id).
+    bytes32 internal constant PLATFORM   = keccak256("x");
+    bytes32 internal constant CREATOR_ID = keccak256(abi.encode(PLATFORM, "12345"));
 
     function run() external {
         require(block.chainid == 31337, "DevLocal: anvil (31337) only");

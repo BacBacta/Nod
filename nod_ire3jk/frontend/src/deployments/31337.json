@@ -2,7 +2,7 @@
   "adapter": "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0",
   "attestor": "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9",
   "chainId": 31337,
-  "demoCreatorId": "0x592f8e5af12c2081273f187fa583544eef6ddd0ebaaec7d4543c95af97f688ab",
+  "demoCreatorId": "0xe69f9e6bbc254b7c905fd0f1dc1234b27630378218c4e0f095b3671a32c1692b",
   "demoToken": "0xA51c1fc2f0D1a1b8494Ed1FE312d7C3a78Ed91C0",
   "factory": "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9",
   "fallback": "0x90F79bf6EB2c4f870365E785982E1f101E93b906",

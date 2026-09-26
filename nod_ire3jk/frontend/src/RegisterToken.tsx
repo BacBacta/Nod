@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { isAddress, isHex, keccak256, stringToBytes, type Address, type Hex } from "viem";
+import { encodeAbiParameters, isAddress, isHex, keccak256, stringToBytes, type Address, type Hex } from "viem";
 import { useAccount, useReadContract } from "wagmi";
 import { registryAbi } from "./abi/Registry";
 import { feeVaultFactoryAbi } from "./abi/FeeVaultFactory";
@@ -8,6 +8,19 @@ import { TxNotice } from "./TxNotice";
 import { useTx } from "./useTx";
 
 type Row = { recipient: string; percent: string };
+
+const PLATFORMS = [
+  ["x", "X"], ["farcaster", "Farcaster (FID)"], ["github", "GitHub"],
+  ["tiktok", "TikTok (open_id)"], ["reddit", "Reddit"],
+] as const;
+
+/** Same derivation as IdentityAttestor.creatorIdOf and the attestation service. */
+function creatorIdOf(platform: string, externalId: string): Hex {
+  return keccak256(encodeAbiParameters(
+    [{ type: "bytes32" }, { type: "string" }],
+    [keccak256(stringToBytes(platform)), externalId],
+  ));
+}
 
 /** A 32-byte hex id is used as is; any other text is hashed (keccak256). */
 function toBytes32(v: string): Hex {
@@ -19,7 +32,8 @@ export function RegisterToken({ d, onRegistered }: { d: Deployment; onRegistered
   const tx = useTx();
   const [token, setToken] = useState("");
   const [adapter, setAdapter] = useState<string>(d.adapter ?? "");
-  const [creatorId, setCreatorId] = useState("");
+  const [platform, setPlatform] = useState<string>("x");
+  const [externalId, setExternalId] = useState("");
   const [fallback, setFallback] = useState<string>(d.fallback ?? "");
   const [launchpadId, setLaunchpadId] = useState("");
   const [rows, setRows] = useState<Row[]>([{ recipient: "", percent: "100" }]);
@@ -35,7 +49,7 @@ export function RegisterToken({ d, onRegistered }: { d: Deployment; onRegistered
     !me && "Connectez un wallet.",
     !tokenOk && "Adresse du token invalide.",
     !isAddress(adapter) && "Adresse de l'adaptateur invalide.",
-    !creatorId && "Identifiant du créateur manquant.",
+    !externalId && "Identifiant du compte créateur manquant.",
     !isAddress(fallback) && "Adresse de repli invalide.",
     rows.some((r) => !isAddress(r.recipient)) && "Adresse de bénéficiaire invalide.",
     bpsTotal !== 10_000 && `Les parts totalisent ${bpsTotal / 100} % au lieu de 100 %.`,
@@ -51,7 +65,7 @@ export function RegisterToken({ d, onRegistered }: { d: Deployment; onRegistered
     }));
     const ok = await tx.send("Enregistrer le token", {
       address: d.registry, abi: registryAbi, functionName: "registerToken",
-      args: [token as Address, adapter as Address, toBytes32(creatorId), splits,
+      args: [token as Address, adapter as Address, creatorIdOf(platform, externalId), splits,
         fallback as Address, toBytes32(launchpadId || "nod")],
     });
     if (ok) onRegistered(token as Address);
@@ -70,9 +84,16 @@ export function RegisterToken({ d, onRegistered }: { d: Deployment; onRegistered
       )}
       <label>Adaptateur du launchpad<input value={adapter} onChange={(e) => setAdapter(e.target.value.trim())} placeholder="0x…" /></label>
       <label>
-        Identifiant du créateur (platformUserId)
-        <input value={creatorId} onChange={(e) => setCreatorId(e.target.value)} placeholder="bytes32 0x… ou identifiant texte (haché)" />
+        Plateforme du créateur
+        <select value={platform} onChange={(e) => setPlatform(e.target.value)}>
+          {PLATFORMS.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+        </select>
       </label>
+      <label>
+        Identifiant du compte (numérique, jamais le pseudo)
+        <input value={externalId} onChange={(e) => setExternalId(e.target.value.trim())} placeholder="ex. 2244994945" />
+      </label>
+      {externalId && <p className="hint">creatorId : <span className="mono">{creatorIdOf(platform, externalId)}</span></p>}
       <fieldset>
         <legend>Répartition des frais</legend>
         {rows.map((r, i) => (

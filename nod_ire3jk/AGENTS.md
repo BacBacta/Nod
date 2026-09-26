@@ -9,7 +9,7 @@
 | BullcheeseAdapter | contracts/BullcheeseAdapter.sol | Bullcheese launchpad adapter stub (verifies fee recipient + immutability lock) |
 | FeeVault | contracts/FeeVault.sol | Per-token non-upgradeable USDC vault. ERC-20-only accounting; receive() accepts native USDC (same pool, counted via balanceOf). Accrual ledger: credit() / withdrawFor(). |
 | FeeVaultFactory | contracts/FeeVaultFactory.sol | CREATE2 factory. Salt = keccak256(deployer, nonce). admin-gated setRegistry. predictVaultAddress(deployer, token) requires real token arg. |
-| IdentityAttestor | contracts/IdentityAttestor.sol | EIP-712 attestations keyed by platformUserId (bytes32). 7-day rotation delay, 7-day first-claim cooldown, replay protection. |
+| IdentityAttestor | contracts/IdentityAttestor.sol | EIP-712 attestations keyed by creatorId = creatorIdOf(keccak256(platform), externalId); id bound to its platform. attest = first wallet or same wallet only; wallet changes via 7-day rotation. First-claim cooldown, replay protection. Signed by attestation-service/. |
 | Registry | contracts/Registry.sol | Core 5-state-per-token + per-recipient state machine. Accrual distribution (credit for splits, push for treasury/buyback/fallback). Claim pause limited to 72h. |
 | PayoutRouter | contracts/PayoutRouter.sol | Pull-based claim() and batchClaim(). Reads vault.claimable(wallet). Payout override support. |
 | BuybackModule | contracts/BuybackModule.sol | Keeper-scheduled Uniswap V3 USDC→NOD swap. Accumulate-until-NOD-set mode. Disable switch. |

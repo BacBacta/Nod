@@ -196,6 +196,30 @@ export const identityAttestorAbi = [
   },
   {
     "type": "function",
+    "name": "creatorIdOf",
+    "inputs": [
+      {
+        "name": "platform",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "externalId",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
     "name": "eip712Domain",
     "inputs": [],
     "outputs": [
@@ -395,6 +419,25 @@ export const identityAttestorAbi = [
         "name": "",
         "type": "bool",
         "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "platformOf",
+    "inputs": [
+      {
+        "name": "platformId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "platform",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "stateMutability": "view"
@@ -836,6 +879,27 @@ export const identityAttestorAbi = [
   },
   {
     "type": "error",
+    "name": "PlatformMismatch",
+    "inputs": [
+      {
+        "name": "platformId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "bound",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "given",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RotationNotReady",
     "inputs": [
       {
@@ -853,6 +917,27 @@ export const identityAttestorAbi = [
         "name": "str",
         "type": "string",
         "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "WalletChangeRequiresRotation",
+    "inputs": [
+      {
+        "name": "platformId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "current",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "requested",
+        "type": "address",
+        "internalType": "address"
       }
     ]
   },

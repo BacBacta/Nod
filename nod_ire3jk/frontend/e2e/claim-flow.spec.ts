@@ -47,7 +47,7 @@ test("a wrong action shows the contract's error name", async ({ page }) => {
     page.getByRole("button", { name: "Enregistrer un token" }),
   ).click();
   await page.getByLabel("Adresse du token").fill("0x000000000000000000000000000000000000dEaD");
-  await page.getByLabel("Identifiant du créateur (platformUserId)").fill("someone");
+  await page.getByLabel("Identifiant du compte (numérique, jamais le pseudo)").fill("12345");
   await page.getByLabel("Bénéficiaire 1").fill("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC");
   await page.getByRole("button", { name: "Enregistrer", exact: true }).click();
   // The mock launchpad has no fee recipient for this token, so the adapter rejects it.
