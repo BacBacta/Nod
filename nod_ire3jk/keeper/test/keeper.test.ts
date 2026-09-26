@@ -26,8 +26,10 @@ const erc20 = [{ type: "function", name: "balanceOf", stateMutability: "view", i
 
 describe.skipIf(!rpc || !d.bullcheeseLocker)("keeper on the local stack", () => {
   const transport = http(rpc);
-  const pub = createPublicClient({ chain: anvil, transport });
-  const creator = createWalletClient({ chain: anvil, transport, account: CREATOR });
+  // viem polls receipts every 4s by default; a missed first check then costs 4s per tx.
+  const pollingInterval = 100;
+  const pub = createPublicClient({ chain: anvil, transport, pollingInterval });
+  const creator = createWalletClient({ chain: anvil, transport, account: CREATOR, pollingInterval });
   const config = { registry: d.registry as Address, fromBlock: 0n, oracleCardinality: 50, minTokenFees: 1n, maxSplits: 4, logChunk: 10_000n };
 
   async function tx(hash: Hex) {
@@ -48,7 +50,7 @@ describe.skipIf(!rpc || !d.bullcheeseLocker)("keeper on the local stack", () => 
     await tx(await creator.writeContract({ address: d.bullcheeseLocker, abi: lockerAbi, functionName: "accrue", args: [0n, 1_000_000_000n] }));
 
     const logs: string[] = [];
-    const keeper = createKeeper(pub, createWalletClient({ chain: anvil, transport, account: KEEPER }), config, (m) => logs.push(m));
+    const keeper = createKeeper(pub, createWalletClient({ chain: anvil, transport, account: KEEPER, pollingInterval }), config, (m) => logs.push(m));
     const [report] = await keeper.runOnce();
 
     expect(report.token).toBe(token);
@@ -66,11 +68,11 @@ describe.skipIf(!rpc || !d.bullcheeseLocker)("keeper on the local stack", () => 
     // The mock router pays 1:1 at TWAP; make it pay 5% less (e.g. a thin pool).
     const routerAbi = [{ type: "function", name: "setRateBps", stateMutability: "nonpayable", inputs: [{ type: "uint256" }], outputs: [] }] as const;
     const router = await pub.readContract({ address: d.registry, abi: registryAbi, functionName: "swapRouter" });
-    const deployer = createWalletClient({ chain: anvil, transport, account: privateKeyToAccount("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80") });
+    const deployer = createWalletClient({ chain: anvil, transport, pollingInterval, account: privateKeyToAccount("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80") });
     await tx(await deployer.writeContract({ address: router, abi: routerAbi, functionName: "setRateBps", args: [9_500n] }));
     await tx(await creator.writeContract({ address: d.bullcheeseLocker, abi: lockerAbi, functionName: "accrue", args: [0n, 8_000_000n] }));
 
-    const keeper = createKeeper(pub, createWalletClient({ chain: anvil, transport, account: KEEPER }), config, () => {});
+    const keeper = createKeeper(pub, createWalletClient({ chain: anvil, transport, account: KEEPER, pollingInterval }), config, () => {});
     const [report] = await keeper.runOnce();
     expect(report.swaps).toHaveLength(0);
     expect(report.note).toMatch(/below the TWAP floor/);
