@@ -11,6 +11,8 @@ import {BuybackModule}     from "../BuybackModule.sol";
 import {MockLaunchpadAdapter} from "../test-helpers/MockLaunchpadAdapter.sol";
 import {MockERC20}         from "../test-helpers/MockERC20.sol";
 import {MockLaunchpad}     from "../test-helpers/MockLaunchpad.sol";
+import {BullcheeseAdapter} from "../BullcheeseAdapter.sol";
+import {MockMintPlus, MockLocker, MockV3Pool} from "../test-helpers/MockBullcheese.sol";
 
 /**
  * @title  DevLocal
@@ -90,6 +92,16 @@ contract DevLocal is Script {
             keccak256("dev-launchpad")
         );
 
+        // Bullcheese-style (pull model) demo: DEMO2's LP locker belongs to the creator,
+        // who hands it to the Nod vault from the frontend's registration form.
+        MockMintPlus mintPlus = new MockMintPlus();
+        BullcheeseAdapter bcAdapter = new BullcheeseAdapter(address(mintPlus), address(usdc));
+        registry.setAdapterWhitelist(address(bcAdapter), true);
+        MockERC20 bcToken = new MockERC20("Bull Demo", "BULL", 18);
+        MockLocker locker = new MockLocker(CREATOR, usdc, bcToken);
+        mintPlus.set(address(bcToken), address(new MockV3Pool(address(usdc), address(bcToken))), address(locker));
+        locker.accrue(200e6, 0); // 200 USDC of creator fees waiting in the locker
+
         // Trading fees accrued so far, plus some USDC for test wallets.
         usdc.mint(predicted, 1_000e6);
         usdc.mint(CREATOR, 100e6);
@@ -108,6 +120,8 @@ contract DevLocal is Script {
         vm.serializeAddress(o, "launchpad", address(launchpad));
         vm.serializeAddress(o, "fallback", FALLBACK);
         vm.serializeAddress(o, "demoToken", address(demoToken));
+        vm.serializeAddress(o, "bullcheeseAdapter", address(bcAdapter));
+        vm.serializeAddress(o, "bullcheeseDemoToken", address(bcToken));
         string memory json = vm.serializeBytes32(o, "demoCreatorId", CREATOR_ID);
         vm.writeJson(json, "./frontend/src/deployments/31337.json");
 

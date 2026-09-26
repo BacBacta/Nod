@@ -1,6 +1,8 @@
 {
   "adapter": "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0",
   "attestor": "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9",
+  "bullcheeseAdapter": "0x9A9f2CCfdE556A7E9Ff0848998Aa4a0CFD8863AE",
+  "bullcheeseDemoToken": "0x3Aa5ebB10DC797CAC828524e59A333d0A371443c",
   "chainId": 31337,
   "demoCreatorId": "0xe69f9e6bbc254b7c905fd0f1dc1234b27630378218c4e0f095b3671a32c1692b",
   "demoToken": "0xA51c1fc2f0D1a1b8494Ed1FE312d7C3a78Ed91C0",
