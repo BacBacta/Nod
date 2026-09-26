@@ -153,7 +153,7 @@ forge test -vv
 forge test --gas-report --no-match-test "invariant"
 ```
 
-175 tests total: 170 unit/fuzz + 4 invariant suites + 1 Arc mainnet fork test (skipped
+176 tests total: 171 unit/fuzz + 4 invariant suites + 1 Arc mainnet fork test (skipped
 unless `ARC_MAINNET_RPC` is set).
 
 ---
@@ -214,6 +214,8 @@ withdraws, transfers or renounces, so the liquidity stays locked for good.
 Arc mainnet addresses: MintPlus `0x16D4c13aD2A23288AA9b9384F24084edC8CBeF41`,
 SwapRouter02 `0x53BF6B0684Ec7eF91e1387Da3D1a1769bC5A6F77`. Bullcheese is not deployed on
 Arc Testnet.
+
+`keeper/` runs steps 3–4 on a schedule (see `keeper/README.md`).
 
 `contracts/test/fork/BullcheeseFork.t.sol` runs this flow against the real contracts on
 an Arc mainnet fork, with real swaps through Uniswap. Only USDC is simulated there,

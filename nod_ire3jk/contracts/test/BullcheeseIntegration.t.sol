@@ -186,6 +186,13 @@ contract BullcheeseIntegrationTest is Test {
         registry.swapTokenFees(address(meme), 1_000e6, 900e6);
     }
 
+    function test_SwapFloor_MatchesTheSwapBound() public {
+        _registerAndAccept();
+        (uint256 twapOut, uint256 floor) = registry.swapFloor(address(meme), 1_000e6);
+        assertEq(twapOut, 1_000e6);
+        assertEq(floor, 970e6);
+    }
+
     function test_SwapTokenFees_RevertsWhenPoolPriceIsBelowMinOut() public {
         _registerAndAccept();
         locker.accrue(0, 1_000e6);

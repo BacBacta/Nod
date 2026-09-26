@@ -12,7 +12,7 @@ import {MockLaunchpadAdapter} from "../test-helpers/MockLaunchpadAdapter.sol";
 import {MockERC20}         from "../test-helpers/MockERC20.sol";
 import {MockLaunchpad}     from "../test-helpers/MockLaunchpad.sol";
 import {BullcheeseAdapter} from "../BullcheeseAdapter.sol";
-import {MockMintPlus, MockLocker, MockV3Pool} from "../test-helpers/MockBullcheese.sol";
+import {MockMintPlus, MockLocker, MockV3Pool, MockSwapRouter02} from "../test-helpers/MockBullcheese.sol";
 
 /**
  * @title  DevLocal
@@ -30,6 +30,7 @@ import {MockMintPlus, MockLocker, MockV3Pool} from "../test-helpers/MockBullchee
  *           #2 split recipient 1 (40%)
  *           #3 fallback recipient
  *           #4 treasury
+ *           #5 keeper (KEEPER_ROLE: converts token fees to USDC)
  */
 contract DevLocal is Script {
     uint256 internal constant ANVIL_KEY_0 =
@@ -39,6 +40,7 @@ contract DevLocal is Script {
     address internal constant RECIP_2  = 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC;
     address internal constant FALLBACK = 0x90F79bf6EB2c4f870365E785982E1f101E93b906;
     address internal constant TREASURY = 0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65;
+    address internal constant KEEPER   = 0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc; // anvil #5
 
     // Canonical ids, as issued by attestation-service: creatorId = creatorIdOf(platform, id).
     bytes32 internal constant PLATFORM   = keccak256("x");
@@ -102,6 +104,10 @@ contract DevLocal is Script {
         mintPlus.set(address(bcToken), address(new MockV3Pool(address(usdc), address(bcToken))), address(locker));
         locker.accrue(200e6, 0); // 200 USDC of creator fees waiting in the locker
 
+        // Token-fee conversion: mock router (1:1 raw units, matching the mock pool's TWAP tick 0).
+        registry.setSwapRouter(address(new MockSwapRouter02()));
+        registry.grantRole(registry.KEEPER_ROLE(), KEEPER);
+
         // Trading fees accrued so far, plus some USDC for test wallets.
         usdc.mint(predicted, 1_000e6);
         usdc.mint(CREATOR, 100e6);
@@ -122,6 +128,8 @@ contract DevLocal is Script {
         vm.serializeAddress(o, "demoToken", address(demoToken));
         vm.serializeAddress(o, "bullcheeseAdapter", address(bcAdapter));
         vm.serializeAddress(o, "bullcheeseDemoToken", address(bcToken));
+        vm.serializeAddress(o, "bullcheeseLocker", address(locker));
+        vm.serializeAddress(o, "keeper", KEEPER);
         string memory json = vm.serializeBytes32(o, "demoCreatorId", CREATOR_ID);
         vm.writeJson(json, "./frontend/src/deployments/31337.json");
 

@@ -653,17 +653,32 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
         TokenRecord storage rec = _requireRecord(token);
         address router = swapRouter;
         if (router == address(0)) revert SwapRouterNotSet();
-        IUniswapV3PoolMinimal pool = IUniswapV3PoolMinimal(ILaunchpadAdapter(rec.adapter).usdcPool(token));
-        if (address(pool) == address(0)) revert NoUsdcPool(token);
-
-        if (amountIn == 0 || amountIn > type(uint128).max) revert InvalidSwapAmount(amountIn);
-        uint256 twapOut = TwapQuote.quote(pool, SWAP_TWAP_WINDOW, token, address(USDC), uint128(amountIn));
-        uint256 floor = (twapOut * (10_000 - MAX_SWAP_SLIPPAGE_BPS)) / 10_000;
+        (IUniswapV3PoolMinimal pool, uint256 twapOut, uint256 floor) = _swapBound(rec, token, amountIn);
         if (minUsdcOut < floor) revert MinOutBelowTwap(minUsdcOut, floor);
 
         uint256 out = FeeVault(payable(rec.vault)).swapTokenFees(router, pool.fee(), amountIn, minUsdcOut);
         emit TokenFeesSwapped(token, amountIn, out, twapOut);
         _distributeIncoming(token);
+    }
+
+    /**
+     * @notice TWAP value of `amountIn` token fees in USDC, and the lowest `minUsdcOut`
+     *         `swapTokenFees` accepts for it. For keepers and UIs.
+     */
+    function swapFloor(address token, uint256 amountIn) external view returns (uint256 twapOut, uint256 floor) {
+        (, twapOut, floor) = _swapBound(_requireRecord(token), token, amountIn);
+    }
+
+    function _swapBound(TokenRecord storage rec, address token, uint256 amountIn)
+        internal
+        view
+        returns (IUniswapV3PoolMinimal pool, uint256 twapOut, uint256 floor)
+    {
+        pool = IUniswapV3PoolMinimal(ILaunchpadAdapter(rec.adapter).usdcPool(token));
+        if (address(pool) == address(0)) revert NoUsdcPool(token);
+        if (amountIn == 0 || amountIn > type(uint128).max) revert InvalidSwapAmount(amountIn);
+        twapOut = TwapQuote.quote(pool, SWAP_TWAP_WINDOW, token, address(USDC), uint128(amountIn));
+        floor = (twapOut * (10_000 - MAX_SWAP_SLIPPAGE_BPS)) / 10_000;
     }
 
     function _distributeIncoming(address token) internal {
