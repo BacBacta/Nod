@@ -219,6 +219,36 @@ contract BuybackModuleTest is Test {
         assertTrue(module.disabled());
     }
 
+    function test_ExecuteBuyback_RequiresPoolForTwap() public {
+        vm.startPrank(timelockAddr);
+        module.setNodToken(address(nodToken));
+        module.setDisabled(false);
+        vm.stopPrank();
+        usdc.mint(address(module), 100e6);
+        vm.prank(keeperAddr);
+        vm.expectRevert(BuybackModule.PoolNotSet.selector);
+        module.executeBuyback(100e6, 100e6, block.timestamp + 1 hours);
+    }
+
+    function test_ExecuteBuyback_RejectsMinOutBelowTwapFloor() public {
+        _enable();
+        usdc.mint(address(module), 100e6);
+        nodToken.mint(address(router), 1000e18);
+        // TWAP tick 0 in the mock pool: 100e6 USDC is worth 100e6 raw NOD.
+        uint256 floor = 100e6 * (10_000 - SLIPPAGE) / 10_000;
+        vm.prank(keeperAddr);
+        vm.expectRevert(abi.encodeWithSelector(BuybackModule.SlippageExceedsMax.selector, floor, floor - 1));
+        module.executeBuyback(100e6, floor - 1, block.timestamp + 1 hours);
+    }
+
+    function test_ExecuteBuyback_DeadlinePassedReverts() public {
+        _enable();
+        usdc.mint(address(module), 100e6);
+        vm.prank(keeperAddr);
+        vm.expectRevert(abi.encodeWithSelector(BuybackModule.DeadlinePassed.selector, block.timestamp - 1));
+        module.executeBuyback(100e6, 100e6, block.timestamp - 1);
+    }
+
     function test_SetMaxSlippage_AboveCap5000Reverts() public {
         vm.prank(timelockAddr);
         vm.expectRevert(); // SlippageExceedsMax

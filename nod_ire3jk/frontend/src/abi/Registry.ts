@@ -58,6 +58,19 @@ export const registryAbi = [
   },
   {
     "type": "function",
+    "name": "CLAIM_PAUSE_COOLDOWN",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint48",
+        "internalType": "uint48"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "CLAIM_PAUSE_MAX",
     "inputs": [],
     "outputs": [
@@ -240,6 +253,19 @@ export const registryAbi = [
   },
   {
     "type": "function",
+    "name": "UNPAUSE_GRACE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint48",
+        "internalType": "uint48"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "USDC",
     "inputs": [],
     "outputs": [
@@ -390,7 +416,13 @@ export const registryAbi = [
         "internalType": "address"
       }
     ],
-    "outputs": [],
+    "outputs": [
+      {
+        "name": "payout",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
     "stateMutability": "nonpayable"
   },
   {
@@ -596,6 +628,19 @@ export const registryAbi = [
         "name": "",
         "type": "bool",
         "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "lastClaimPauseEnd",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint48",
+        "internalType": "uint48"
       }
     ],
     "stateMutability": "view"
@@ -862,6 +907,19 @@ export const registryAbi = [
   },
   {
     "type": "function",
+    "name": "setDefaultDepositCap",
+    "inputs": [
+      {
+        "name": "newCap",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setFallbackWhitelist",
     "inputs": [
       {
@@ -966,10 +1024,34 @@ export const registryAbi = [
         "name": "token",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "proposalId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "splitChangeIdOf",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -986,6 +1068,30 @@ export const registryAbi = [
         "name": "",
         "type": "uint8",
         "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "splitDeadlineOf",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "i",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint48",
+        "internalType": "uint48"
       }
     ],
     "stateMutability": "view"
@@ -1113,6 +1219,19 @@ export const registryAbi = [
     "inputs": [],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "unpausedAt",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint48",
+        "internalType": "uint48"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -1488,6 +1607,18 @@ export const registryAbi = [
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      },
+      {
+        "name": "proposalId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "proposer",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -1738,8 +1869,24 @@ export const registryAbi = [
   },
   {
     "type": "error",
+    "name": "ClaimsAlreadyPaused",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ClaimsNotPaused",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ClaimsPauseCooldown",
+    "inputs": [
+      {
+        "name": "until",
+        "type": "uint48",
+        "internalType": "uint48"
+      }
+    ]
   },
   {
     "type": "error",
@@ -1764,6 +1911,17 @@ export const registryAbi = [
   },
   {
     "type": "error",
+    "name": "DuplicateRecipient",
+    "inputs": [
+      {
+        "name": "recipient",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "EnforcedPause",
     "inputs": []
   },
@@ -1771,6 +1929,17 @@ export const registryAbi = [
     "type": "error",
     "name": "ExpectedPause",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ExpiryBlockedAfterPause",
+    "inputs": [
+      {
+        "name": "until",
+        "type": "uint48",
+        "internalType": "uint48"
+      }
+    ]
   },
   {
     "type": "error",
@@ -2041,6 +2210,27 @@ export const registryAbi = [
         "name": "length",
         "type": "uint8",
         "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "StaleSplitsProposal",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "expected",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "given",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ]
   },

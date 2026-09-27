@@ -156,7 +156,7 @@ forge test -vv
 forge test --gas-report --no-match-test "invariant"
 ```
 
-176 tests total: 171 unit/fuzz + 4 invariant suites + 1 Arc mainnet fork test (skipped
+195 tests total: 190 unit/fuzz + 4 invariant suites + 1 Arc mainnet fork test (skipped
 unless `ARC_MAINNET_RPC` is set).
 
 ---

@@ -22,11 +22,6 @@ export const feeVaultAbi = [
         "name": "_salt",
         "type": "bytes32",
         "internalType": "bytes32"
-      },
-      {
-        "name": "_depositCap",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "stateMutability": "nonpayable"
@@ -228,6 +223,11 @@ export const feeVaultAbi = [
         "name": "_registry",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "_depositCap",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],

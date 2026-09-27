@@ -4,11 +4,49 @@ Scope: every production contract under `contracts/` (Registry, FeeVault, FeeVaul
 PayoutRouter, IdentityAttestor, BuybackModule, BullcheeseAdapter, NodTimelockController,
 TwapQuote, external interfaces), full contents at commit `ecce20b`. Tests and scripts
 are out of scope. This is an internal review, **not** a substitute for an external audit.
+The fixes changed the contracts; the external audit must review the fixed code.
 
 Twelve findings have a Foundry proof of concept in `docs/security-poc/NodPoC.t.sol.txt`.
 Each PoC passes against the current code, which means it reproduces the bug. The file is
 stored as `.txt` so it stays out of the test suite. Once a fix lands, its PoC becomes a
 regression test that asserts the fixed behaviour.
+
+## Status
+
+All findings except 10 are fixed, each with a regression test in
+`contracts/test/SecurityRegression.t.sol` (or the contract's own test file) that
+replays the proof of concept and asserts the fix. Finding 10 is kept as a documented
+design choice.
+
+| # | Status | Fix | Test |
+|---|---|---|---|
+| 1 | Fixed | `signSplitsChange(token, proposalId)`: a signature commits to one proposal. | `test_Fix1_*` |
+| 2 | Fixed | Each split's decision deadline starts when it can first be accepted: token acceptance or (re)assignment by a split change. | `test_Fix2_*` |
+| 3 | Fixed | `pauseClaims` reverts while a pause runs and for 72h after one ends. | `test_Fix3_*` |
+| 4 | Fixed | Credit belongs to the address: `claim` pays `claimable(caller)` whatever the split state; `splitIndex` only selects a redirect. | `test_Fix4_*` |
+| 5 | Fixed | `accept`, `refuse` and split changes first settle funds under the previous state. | `test_Fix5_*` |
+| 6 | Fixed | Splits expire only while the token is ACCEPTED, after their own deadline. | `test_Fix6_*` |
+| 7 | Fixed | BuybackModule uses the SwapRouter02 interface; the deadline is checked in the contract. | BuybackModule tests |
+| 8 | Fixed | Vault salt is `(deployer, token)`. | `test_Fix8_*` |
+| 9 | Fixed | `minAmountOut` is bounded by the USDC/NOD pool's 10-minute TWAP minus `maxSlippageBps`. | `test_ExecuteBuyback_RejectsMinOutBelowTwapFloor` |
+| 10 | By design | Splits pay wallets, not identities. Revocation stops the identity's creator actions (accept, refuse) and any new attestation. USDC already credited to a split wallet stays that wallet's. | — |
+| 11 | Fixed | `expire` and `expireSplitRecipient` are blocked while paused and for 3 days after `unpause`. | `test_Fix11_*` |
+| 12 | Fixed | `refuse` enforces the first-claim cooldown. | `test_Fix12_*` |
+| 13 | Fixed | Claims try to distribute new fees but proceed if that fails; `batchClaim` skips failing entries. | `test_FixMinor_BatchClaimIsolatesFailures` |
+| 14 | Fixed | `revoke` needs `REVOKER_ROLE`, granted to the multisig by `DeployNod`; `unrevoke` goes through the timelock. | `test_Fix14_*` |
+| 15 | Fixed | The cap limits funds held, not lifetime inflow. It is out of the CREATE2 init code, and `Registry.setDefaultDepositCap` (timelock) changes the default. | `test_Fix15_*`, `test_DepositCap_*` |
+
+Minor items:
+- **Fixed:**
+  - duplicate recipients are rejected;
+  - `batchClaim` isolates failures;
+  - `setNodToken` no longer re-enables buybacks;
+  - `getSplit` is bounds-checked;
+  - `Claimed` reports the address actually paid.
+- **Open:**
+  - no function lets the current wallet cancel a pending rotation; only revocation can stop it;
+  - PayoutRouter's unused `attestor`, `USDC` and AccessControl remain;
+  - some comments are stale.
 
 ## Checked and found sound
 
