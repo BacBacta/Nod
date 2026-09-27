@@ -140,15 +140,15 @@ contract FeeVault is ReentrancyGuard {
      * @param _token     Launchpad token this vault serves.
      * @param _salt      The CREATE2 salt used to deploy this vault (stored for off-chain
      *                   verification).
-     * @param _depositCap  Initial per-vault deposit cap in USDC (6-decimal units).
-     *                     Pass 0 to disable the cap at deploy time.
+     * @dev   The deposit cap is not a constructor argument: it would be part of the
+     *        CREATE2 init code, so changing the default cap would move every predicted
+     *        vault address. The factory sets it together with the Registry.
      */
     constructor(
         address _usdc,
         address _factory,
         address _token,
-        bytes32 _salt,
-        uint256 _depositCap
+        bytes32 _salt
     ) {
         if (_usdc == address(0) || _factory == address(0) || _token == address(0)) {
             revert ZeroAddress();
@@ -157,7 +157,6 @@ contract FeeVault is ReentrancyGuard {
         factory = _factory;
         token = _token;
         salt = _salt;
-        depositCap = _depositCap;
     }
 
     // ─── Registry registration (one-time) ────────────────────────────────────────
@@ -167,11 +166,12 @@ contract FeeVault is ReentrancyGuard {
      *         immediately after CREATE2 deployment.  Cannot be changed afterward.
      * @param _registry  Address of the Registry contract.
      */
-    function setRegistry(address _registry) external {
+    function setRegistry(address _registry, uint256 _depositCap) external {
         if (msg.sender != factory) revert NotRegistry();
         if (_registry == address(0)) revert ZeroAddress();
         if (registry != address(0)) revert NotRegistry(); // already set
         registry = _registry;
+        depositCap = _depositCap;
     }
 
     // ─── Modifiers ───────────────────────────────────────────────────────────────
@@ -205,9 +205,12 @@ contract FeeVault is ReentrancyGuard {
             delta = currentGross - accounted;
         }
 
+        // The cap limits counted funds still held (a TVL cap), not lifetime inflow:
+        // paying out frees room for new fees.
         uint256 cap = depositCap;
-        if (cap > 0 && accounted + delta > cap) {
-            uint256 room = cap > accounted ? cap - accounted : 0;
+        uint256 held = accounted - observedOut;
+        if (cap > 0 && held + delta > cap) {
+            uint256 room = cap > held ? cap - held : 0;
             emit DepositCapReached(address(this), cap, delta - room);
             if (room == 0) return;
             delta = room;

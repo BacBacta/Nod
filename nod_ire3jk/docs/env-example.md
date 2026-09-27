@@ -32,4 +32,11 @@ NOD_DEPOSIT_CAP=10000000000
 
 # Initial protocol fee in basis points.  Max 1500 (15%).  Default 1000 (10%).
 NOD_PROTOCOL_FEE=1000
+
+# Testnet only: also deploy a demo launchpad (Bullcheese is not on Arc Testnet)
+NOD_DEMO_LAUNCHPAD=true
+
+# TimelockOps.s.sol (optional): swap router for token-fee conversion, Registry keeper
+# NOD_SWAP_ROUTER=
+# NOD_REGISTRY_KEEPER=
 ```

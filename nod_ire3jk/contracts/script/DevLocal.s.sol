@@ -58,6 +58,7 @@ contract DevLocal is Script {
 
         FeeVaultFactory factory = new FeeVaultFactory(dev, address(usdc), 0);
         IdentityAttestor attestor = new IdentityAttestor(dev, dev, dev);
+        attestor.grantRole(attestor.REVOKER_ROLE(), dev);
         BuybackModule buyback = new BuybackModule(
             address(usdc), dev, address(0), 3000, 100, 7 days, dev, dev
         );

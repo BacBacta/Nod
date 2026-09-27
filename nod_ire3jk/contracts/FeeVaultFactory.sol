@@ -123,7 +123,9 @@ contract FeeVaultFactory {
         if (deployer == address(0) || token == address(0)) revert ZeroAddress();
 
         uint256 nonce = deployerNonce[deployer];
-        usedSalt = keccak256(abi.encodePacked(deployer, nonce));
+        // Salt from (deployer, token): another registration by the same deployer can
+        // never move a vault address that was predicted and fixed on a launchpad.
+        usedSalt = keccak256(abi.encodePacked(deployer, token));
 
         if (vaults[usedSalt] != address(0)) revert VaultAlreadyDeployed(usedSalt);
 
@@ -132,8 +134,7 @@ contract FeeVaultFactory {
             USDC,
             address(this),
             token,
-            usedSalt,
-            defaultDepositCap
+            usedSalt
         );
 
         vault = address(newVault);
@@ -143,7 +144,7 @@ contract FeeVaultFactory {
         }
 
         // Wire vault → Registry (one-time call from factory, which IS the factory)
-        newVault.setRegistry(registry);
+        newVault.setRegistry(registry, defaultDepositCap);
 
         emit VaultDeployed(token, vault, usedSalt, deployer, nonce);
     }
@@ -180,8 +181,7 @@ contract FeeVaultFactory {
         view
         returns (address predicted, bytes32 saltUsed)
     {
-        uint256 nonce = deployerNonce[deployer];
-        saltUsed = keccak256(abi.encodePacked(deployer, nonce));
+        saltUsed = keccak256(abi.encodePacked(deployer, token));
 
         bytes memory creationCode = abi.encodePacked(
             type(FeeVault).creationCode,
@@ -189,8 +189,7 @@ contract FeeVaultFactory {
                 USDC,
                 address(this),
                 token,
-                saltUsed,
-                defaultDepositCap
+                saltUsed
             )
         );
 

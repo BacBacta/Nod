@@ -202,7 +202,7 @@ function SplitRow({ d, token, vault, index, tokenState, deadlinePassed, me, tx }
             <button className="secondary" disabled={tx.busy} onClick={() => splitCall(`Refuser la part #${i}`, "refuseSplit")}>Refuser</button>
           </>
         )}
-        {mine && state === TokenState.ACCEPTED && (claimable ?? 0n) > 0n && (
+        {mine && (claimable ?? 0n) > 0n && (
           <button
             disabled={tx.busy}
             onClick={() => tx.send(`Réclamer la part #${i}`, {

@@ -74,6 +74,11 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
     error NoPendingSplitChange(address token);
     error SplitChangeAlreadySigned(address token, address signer);
     error SplitChangeNotFullySigned(address token);
+    error StaleSplitsProposal(address token, bytes32 expected, bytes32 given);
+    error DuplicateRecipient(address recipient);
+    error ExpiryBlockedAfterPause(uint48 until);
+    error ClaimsAlreadyPaused();
+    error ClaimsPauseCooldown(uint48 until);
     error NotFromTimelock();
     /// @notice Caller does not hold PAYOUT_ROUTER_ROLE.
     error NotPayoutRouter();
@@ -100,7 +105,7 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
     event SplitRecipientAccepted(address indexed token, uint8 splitIndex, address indexed recipient);
     event SplitRecipientRefused(address indexed token, uint8 splitIndex, address indexed recipient);
     event SplitRecipientExpired(address indexed token, uint8 splitIndex, address indexed recipient);
-    event SplitsChangeProposed(address indexed token);
+    event SplitsChangeProposed(address indexed token, bytes32 indexed proposalId, address proposer);
     event SplitsChanged(address indexed token);
     event FallbackWhitelisted(address indexed recipient, bool status);
     event AdapterWhitelisted(address indexed adapter, bool status);
@@ -127,6 +132,7 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
         // Signature tracking for split changes (packed with redirectTo)
         bool    hasSigned;      // whether this recipient has signed the pending change
         uint256 reserved;       // gross share held for this recipient while it is PENDING
+        uint48  deadline;       // decision deadline; starts when the split can first be accepted
     }
 
     struct TokenRecord {
@@ -147,6 +153,8 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
         SplitRecipient[10] pendingSplits;
         uint8              pendingSplitCount;
         uint256            totalReserved; // sum of splits[i].reserved
+        bytes32            splitChangeId;  // id of the pending proposal; signatures commit to it
+        uint64             splitChangeNonce;
     }
 
     // ─── Roles ───────────────────────────────────────────────────────────────────
@@ -165,6 +173,10 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
     uint48  public constant REGISTRATION_DEADLINE  = 14 days;
     uint48  public constant REFUSED_LOCKOUT        = 30 days;
     uint48  public constant CLAIM_PAUSE_MAX        = 72 hours;
+    /// @notice After a general pause lifts, expiries wait this long so parties can act first.
+    uint48  public constant UNPAUSE_GRACE          = 3 days;
+    /// @notice A new claims pause cannot start until this long after the previous one ended.
+    uint48  public constant CLAIM_PAUSE_COOLDOWN   = 72 hours;
 
     bytes32 public constant REASON_SPLIT      = keccak256("SPLIT_ACCEPTED");
     bytes32 public constant REASON_FALLBACK   = keccak256("FALLBACK");
@@ -200,6 +212,12 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
 
     /// @notice Timestamp at which claims were paused (0 = not paused).
     uint48 public claimPausedAt;
+
+    /// @notice When the last claims pause ended (manually or by the 72h cap).
+    uint48 public lastClaimPauseEnd;
+
+    /// @notice Last time the general pause was lifted (expiries wait UNPAUSE_GRACE after it).
+    uint48 public unpausedAt;
 
     // ─── Constructor ─────────────────────────────────────────────────────────────
 
@@ -265,6 +283,7 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
             if (block.timestamp < uint256(claimPausedAt) + CLAIM_PAUSE_MAX) {
                 revert ClaimsPausedTooLong();
             }
+            lastClaimPauseEnd = claimPausedAt + CLAIM_PAUSE_MAX;
             claimPausedAt = 0;
             emit ClaimsPauseEnded();
         }
@@ -336,7 +355,8 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
                 state:      TokenState.PENDING,
                 redirectTo: address(0),
                 hasSigned:  false,
-                reserved:   0
+                reserved:   0,
+                deadline:   0
             });
             unchecked { ++i; }
         }
@@ -376,21 +396,18 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
                 );
             }
         }
-        // First-claim cooldown (7 days from first attestation)
-        uint48 firstAt = attestor.firstAttestedAt(rec.creatorId);
-        if (block.timestamp < uint256(firstAt) + IdentityAttestor(address(attestor)).FIRST_CLAIM_COOLDOWN()) {
-            revert FirstClaimCooldownActive(
-                rec.creatorId,
-                firstAt + IdentityAttestor(address(attestor)).FIRST_CLAIM_COOLDOWN()
-            );
-        }
+        _requireFirstClaimCooldown(rec);
+
+        // Settle what arrived under the previous state first (EXPIRED -> treasury/buyback,
+        // REFUSED -> fallback), so accepting never captures those funds.
+        _distributeIncoming(token);
 
         rec.state = TokenState.ACCEPTED;
+        // Each PENDING split can only be accepted from now on: start its deadline here.
+        _startSplitDeadlines(rec);
         emit TokenAccepted(token, rec.creatorId);
 
-        // Snapshot vault balance now that state is ACCEPTED — distribute accrued fees
-        // only if the token was in PENDING state (not EXPIRED — per spec, EXPIRED accrued
-        // fees stay in 50/50 split and are not retroactively re-routed).
+        // Fees accrued while PENDING belong to the recipients: distribute them now.
         if (s == TokenState.PENDING) {
             _distributeAccruedFees(token, rec);
         }
@@ -412,6 +429,12 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
         if (s != TokenState.PENDING && s != TokenState.ACCEPTED && s != TokenState.EXPIRED) {
             revert InvalidState(token, s, TokenState.PENDING);
         }
+        // Same first-claim cooldown as accept(): a freshly hijacked identity cannot
+        // redirect fees to the fallback either.
+        _requireFirstClaimCooldown(rec);
+
+        // Settle what arrived under the previous state before re-routing.
+        _distributeIncoming(token);
 
         rec.state = TokenState.REFUSED;
         rec.refusedAt = uint48(block.timestamp);
@@ -425,7 +448,8 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
      *         Anyone may call this after the deadline.
      * @param token  The registered token.
      */
-    function expire(address token) external nonReentrant {
+    function expire(address token) external nonReentrant whenNotPaused {
+        _requireExpiryAllowed();
         TokenRecord storage rec = _requireRecord(token);
         if (rec.state != TokenState.PENDING) {
             revert InvalidState(token, rec.state, TokenState.PENDING);
@@ -491,15 +515,18 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
      * @notice Expire a single split recipient's share after the token deadline.
      *         Anyone may call once deadline has passed and the recipient is still PENDING.
      */
-    function expireSplitRecipient(address token, uint8 splitIndex) external nonReentrant {
+    function expireSplitRecipient(address token, uint8 splitIndex) external nonReentrant whenNotPaused {
+        _requireExpiryAllowed();
         TokenRecord storage rec = _requireRecord(token);
+        // A split can only be accepted once the token is ACCEPTED, so it can only expire then.
+        _requireTokenState(token, rec, TokenState.ACCEPTED);
         SplitRecipient storage sr = _requireSplit(rec, splitIndex);
 
         if (sr.state != TokenState.PENDING) {
             revert InvalidState(token, sr.state, TokenState.PENDING);
         }
-        if (block.timestamp < rec.deadline) {
-            revert DeadlineNotPassed(token, rec.deadline);
+        if (sr.deadline == 0 || block.timestamp < sr.deadline) {
+            revert DeadlineNotPassed(token, sr.deadline);
         }
 
         sr.state = TokenState.EXPIRED;
@@ -534,7 +561,10 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
         }
         if (!isRecipient) revert NotRecipient(token, msg.sender);
 
-        // Reset pending
+        // Reset pending. Signatures commit to this id, so a later proposal cannot
+        // inherit signatures given for an earlier one.
+        bytes32 proposalId = keccak256(abi.encode(token, ++rec.splitChangeNonce, newSplits));
+        rec.splitChangeId = proposalId;
         rec.splitChangePending = true;
         rec.splitChangeSigCount = 0;
         rec.pendingSplitCount = uint8(newSplits.length);
@@ -549,12 +579,13 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
                 state:      TokenState.PENDING,
                 redirectTo: address(0),
                 hasSigned:  false,
-                reserved:   0
+                reserved:   0,
+                deadline:   0
             });
             unchecked { ++i; }
         }
 
-        emit SplitsChangeProposed(token);
+        emit SplitsChangeProposed(token, proposalId, msg.sender);
     }
 
     /**
@@ -562,10 +593,11 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
      *         recipient.  Once all have signed, the change is applied automatically.
      * @param token  The registered token.
      */
-    function signSplitsChange(address token) external nonReentrant whenNotPaused {
+    function signSplitsChange(address token, bytes32 proposalId) external nonReentrant whenNotPaused {
         TokenRecord storage rec = _requireRecord(token);
         _requireTokenState(token, rec, TokenState.ACCEPTED);
         if (!rec.splitChangePending) revert NoPendingSplitChange(token);
+        if (proposalId != rec.splitChangeId) revert StaleSplitsProposal(token, rec.splitChangeId, proposalId);
 
         // Find and mark the caller's signature
         bool found = false;
@@ -742,7 +774,7 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
         address recipient,
         uint256 amount,
         address payTo
-    ) external nonReentrant claimsNotPausedLong {
+    ) external nonReentrant claimsNotPausedLong returns (address payout) {
         // Only the PayoutRouter may call this
         // NOTE: PayoutRouter is not set as an immutable here to avoid circular
         // dependency at deploy time. We use a role instead.
@@ -751,13 +783,14 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
         }
 
         TokenRecord storage rec = _requireRecord(token);
-        SplitRecipient storage sr = _requireSplit(rec, splitIndex);
 
-        if (sr.recipient != recipient) {
-            revert NotRecipientWallet(token, splitIndex, recipient);
-        }
-        if (sr.state != TokenState.ACCEPTED) {
-            revert InvalidState(token, sr.state, TokenState.ACCEPTED);
+        // Credit belongs to the address that earned it: it stays claimable after the
+        // recipient's split is changed, refused or expired. `splitIndex` only selects
+        // the split whose redirect applies, when it still belongs to `recipient`.
+        payout = payTo;
+        if (splitIndex < rec.splitCount) {
+            SplitRecipient storage sr = rec.splits[splitIndex];
+            if (sr.recipient == recipient && sr.redirectTo != address(0)) payout = sr.redirectTo;
         }
 
         FeeVault vault = FeeVault(payable(rec.vault));
@@ -765,8 +798,6 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
         if (amount > availableClaimable) {
             revert InsufficientClaimable(availableClaimable, amount);
         }
-
-        address payout = (sr.redirectTo != address(0)) ? sr.redirectTo : payTo;
 
         vault.withdrawFor(recipient, payout, amount);
         emit FundsDistributed(token, rec.vault, amount);
@@ -785,12 +816,24 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
     /// @notice Resume registrations and state transitions.
     function unpause() external onlyRole(PAUSER_ROLE) {
         _unpause();
+        unpausedAt = uint48(block.timestamp);
     }
 
     /**
      * @notice Start the claims-pause window (max 72 h).  Only PAUSER_ROLE.
      */
     function pauseClaims() external onlyRole(PAUSER_ROLE) {
+        uint48 pausedAt = claimPausedAt;
+        if (pausedAt != 0) {
+            if (block.timestamp < uint256(pausedAt) + CLAIM_PAUSE_MAX) revert ClaimsAlreadyPaused();
+            // The previous pause lapsed without anyone touching claims: record its end.
+            lastClaimPauseEnd = pausedAt + CLAIM_PAUSE_MAX;
+        }
+        // No chaining: the 72h cap would mean nothing if a new pause could start at once.
+        uint48 end = lastClaimPauseEnd;
+        if (end != 0 && block.timestamp < uint256(end) + CLAIM_PAUSE_COOLDOWN) {
+            revert ClaimsPauseCooldown(end + CLAIM_PAUSE_COOLDOWN);
+        }
         claimPausedAt = uint48(block.timestamp);
         emit ClaimsPauseStarted(claimPausedAt);
     }
@@ -800,6 +843,8 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
      */
     function unpauseClaims() external onlyRole(PAUSER_ROLE) {
         if (claimPausedAt == 0) revert ClaimsNotPaused();
+        uint48 capEnd = claimPausedAt + CLAIM_PAUSE_MAX;
+        lastClaimPauseEnd = block.timestamp < capEnd ? uint48(block.timestamp) : capEnd;
         claimPausedAt = 0;
         emit ClaimsPauseEnded();
     }
@@ -820,6 +865,12 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
         address old = treasury;
         treasury = newTreasury;
         emit TreasuryUpdated(old, newTreasury);
+    }
+
+    /// @notice Default deposit cap for vaults deployed from now on (0 = uncapped). Via timelock.
+    ///         Does not change predicted vault addresses.
+    function setDefaultDepositCap(uint256 newCap) external onlyTimelock {
+        factory.setDefaultDepositCap(newCap);
     }
 
     /// @notice Set the Uniswap router used for token-fee swaps (0 disables).  Via timelock.
@@ -881,8 +932,18 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
         returns (address recipient, uint16 bps, TokenState state, address redirectTo)
     {
         TokenRecord storage rec = _records[token];
-        SplitRecipient storage sr = rec.splits[i];
+        SplitRecipient storage sr = _requireSplit(rec, i);
         return (sr.recipient, sr.bps, sr.state, sr.redirectTo);
+    }
+
+    /// @notice Decision deadline of split `i` (0 until the token is accepted).
+    function splitDeadlineOf(address token, uint8 i) external view returns (uint48) {
+        return _requireSplit(_records[token], i).deadline;
+    }
+
+    /// @notice Id of the pending splits change (sign with this id), or 0.
+    function splitChangeIdOf(address token) external view returns (bytes32) {
+        return _records[token].splitChangeId;
     }
 
     /// @notice Gross USDC held for split `i` of `token` while that recipient is PENDING.
@@ -963,6 +1024,29 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
         }
     }
 
+    function _requireFirstClaimCooldown(TokenRecord storage rec) internal view {
+        uint48 firstAt = attestor.firstAttestedAt(rec.creatorId);
+        uint48 cooldown = IdentityAttestor(address(attestor)).FIRST_CLAIM_COOLDOWN();
+        if (block.timestamp < uint256(firstAt) + cooldown) {
+            revert FirstClaimCooldownActive(rec.creatorId, firstAt + cooldown);
+        }
+    }
+
+    /// @dev Start the decision window of every split still PENDING.
+    function _startSplitDeadlines(TokenRecord storage rec) internal {
+        uint48 deadline = uint48(block.timestamp) + REGISTRATION_DEADLINE;
+        for (uint8 i = 0; i < rec.splitCount; ) {
+            if (rec.splits[i].state == TokenState.PENDING) rec.splits[i].deadline = deadline;
+            unchecked { ++i; }
+        }
+    }
+
+    /// @dev Nothing expires while paused, nor during UNPAUSE_GRACE after a pause.
+    function _requireExpiryAllowed() internal view {
+        uint48 until = unpausedAt + UNPAUSE_GRACE;
+        if (unpausedAt != 0 && block.timestamp < until) revert ExpiryBlockedAfterPause(until);
+    }
+
     function _validateSplits(SplitInput[] calldata splits) internal pure {
         if (splits.length == 0 || splits.length > 10) {
             revert InvalidSplits("length 1-10 required");
@@ -970,6 +1054,10 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
         uint256 total;
         for (uint256 i = 0; i < splits.length; ) {
             if (splits[i].recipient == address(0)) revert InvalidSplits("zero recipient");
+            for (uint256 j = 0; j < i; ) {
+                if (splits[j].recipient == splits[i].recipient) revert DuplicateRecipient(splits[i].recipient);
+                unchecked { ++j; }
+            }
             total += splits[i].bps;
             unchecked { ++i; }
         }
@@ -977,6 +1065,8 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
     }
 
     function _applySplitsChange(address token, TokenRecord storage rec) internal {
+        // Settle what arrived under the old splits first.
+        _distributeIncoming(token);
         // Every current recipient signed the change, so shares held for PENDING
         // recipients return to the pool and are distributed under the new splits.
         _clearReserves(rec);
@@ -988,6 +1078,9 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
         }
         rec.splitChangePending = false;
         rec.splitChangeSigCount = 0;
+        rec.splitChangeId = bytes32(0);
+        // New recipients start PENDING with a fresh decision window.
+        _startSplitDeadlines(rec);
         emit SplitsChanged(token);
     }
 

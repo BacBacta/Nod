@@ -11,8 +11,8 @@ evm_version = "paris"
 optimizer = true
 optimizer_runs = 200
 via_ir = true
-# DevLocal.s.sol writes local (anvil) addresses for the frontend.
-fs_permissions = [{ access = "write", path = "./frontend/src/deployments" }]
+# Deploy scripts write addresses for the frontend; TimelockOps reads them back.
+fs_permissions = [{ access = "read-write", path = "./frontend/src/deployments" }]
 
 # Fork tests against Arc mainnet (Bullcheese/Uniswap contracts use post-Paris opcodes):
 #   ARC_MAINNET_RPC=https://rpc.mainnet.arc.io FOUNDRY_PROFILE=fork forge test --match-path "contracts/test/fork/*"

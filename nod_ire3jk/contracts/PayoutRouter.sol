@@ -38,7 +38,6 @@ contract PayoutRouter is AccessControl, ReentrancyGuard {
     // ─── Errors ──────────────────────────────────────────────────────────────────
 
     error ZeroAddress();
-    error NotRecipientWallet(address token, uint8 splitIndex, address caller);
     error NothingToClaim(address token, uint8 splitIndex);
     error BatchTooLarge(uint256 length, uint256 max);
 
@@ -135,20 +134,18 @@ contract PayoutRouter is AccessControl, ReentrancyGuard {
         nonReentrant
         returns (uint256 claimed)
     {
-        registry.distributeIncoming(token);
+        _tryDistribute(token);
 
-        (address recipient,, Registry.TokenState state,) = registry.getSplit(token, splitIndex);
-        if (recipient != msg.sender) revert NotRecipientWallet(token, splitIndex, msg.sender);
-        if (state != Registry.TokenState.ACCEPTED) revert NothingToClaim(token, splitIndex);
-
-        uint256 amount = _computeClaimable(token, recipient);
+        // The caller's credited balance is theirs whatever their split's current state
+        // (changed, refused or expired after being credited).
+        uint256 amount = _computeClaimable(token, msg.sender);
         if (amount == 0) revert NothingToClaim(token, splitIndex);
 
-        address payTo = _effectivePayoutAddress(msg.sender);
+        address paidTo = registry.executeClaim(
+            token, splitIndex, msg.sender, amount, _effectivePayoutAddress(msg.sender)
+        );
 
-        registry.executeClaim(token, splitIndex, recipient, amount, payTo);
-
-        emit Claimed(token, splitIndex, payTo, amount);
+        emit Claimed(token, splitIndex, paidTo, amount);
         return amount;
     }
 
@@ -178,26 +175,20 @@ contract PayoutRouter is AccessControl, ReentrancyGuard {
             address token = tokens[i];
             uint8   idx   = splitIndexes[i];
 
-            registry.distributeIncoming(token);
+            _tryDistribute(token);
 
-            (address recipient,, Registry.TokenState state,) = registry.getSplit(token, idx);
-            if (recipient != msg.sender || state != Registry.TokenState.ACCEPTED) {
-                skipped[i] = true;
-                unchecked { ++i; }
-                continue;
-            }
-
-            uint256 amount = _computeClaimable(token, recipient);
+            uint256 amount = _computeClaimable(token, msg.sender);
+            // One bad entry (unknown token, claims paused...) never reverts the batch.
             if (amount == 0) {
                 skipped[i] = true;
-                unchecked { ++i; }
-                continue;
+            } else {
+                try registry.executeClaim(token, idx, msg.sender, amount, payTo) returns (address paidTo) {
+                    totalClaimed += amount;
+                    emit Claimed(token, idx, paidTo, amount);
+                } catch {
+                    skipped[i] = true;
+                }
             }
-
-            registry.executeClaim(token, idx, recipient, amount, payTo);
-            totalClaimed += amount;
-            emit Claimed(token, idx, payTo, amount);
-
             unchecked { ++i; }
         }
 
@@ -207,6 +198,15 @@ contract PayoutRouter is AccessControl, ReentrancyGuard {
     }
 
     // ─── Internal helpers ────────────────────────────────────────────────────────
+
+    /**
+     * @dev Distribute newly received fees before claiming, but never let a failure
+     *      there (e.g. a blocklisted fallback or treasury) block withdrawal of
+     *      balances that are already credited.
+     */
+    function _tryDistribute(address token) internal {
+        try registry.distributeIncoming(token) {} catch {}
+    }
 
     /**
      * @dev Compute the pro-rata share of the vault's available balance that belongs

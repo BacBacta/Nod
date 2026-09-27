@@ -195,11 +195,11 @@ contract PayoutRouterTest is Test {
     function test_Claim_WrongCallerReverts() public {
         _fullSetup();
         address wrong = makeAddr("wrong");
+        // Credit belongs to addresses: a caller with none gets nothing, whatever index.
         vm.prank(wrong);
-        vm.expectRevert(
-            abi.encodeWithSelector(PayoutRouter.NotRecipientWallet.selector, launchToken, uint8(0), wrong)
-        );
+        vm.expectRevert(abi.encodeWithSelector(PayoutRouter.NothingToClaim.selector, launchToken, uint8(0)));
         router.claim(launchToken, 0);
+        assertEq(usdc.balanceOf(wrong), 0);
     }
 
     // ─── batchClaim ──────────────────────────────────────────────────────────────

@@ -82,6 +82,8 @@ contract IdentityAttestor is AccessControl, Pausable, EIP712 {
     event WalletRotationCompleted(bytes32 indexed platformId, address indexed newWallet);
     /// @notice An attestation was revoked.
     event AttestationRevoked(bytes32 indexed platformId);
+    /// @notice A revocation was lifted; the identity can be attested again.
+    event AttestationUnrevoked(bytes32 indexed platformId);
 
     // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -119,6 +121,9 @@ contract IdentityAttestor is AccessControl, Pausable, EIP712 {
 
     bytes32 public constant ATTESTER_ROLE = keccak256("ATTESTER_ROLE");
     bytes32 public constant PAUSER_ROLE   = keccak256("PAUSER_ROLE");
+    /// @notice May revoke identities. Held by the multisig, not by the online attester key,
+    ///         so a leaked attester key cannot lock creators out.
+    bytes32 public constant REVOKER_ROLE  = keccak256("REVOKER_ROLE");
 
     // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -266,17 +271,26 @@ contract IdentityAttestor is AccessControl, Pausable, EIP712 {
     // ─── Revocation ──────────────────────────────────────────────────────────────
 
     /**
-     * @notice Revoke the attestation for `platformUserId`.  Only ATTESTER_ROLE.
+     * @notice Revoke the attestation for `platformUserId`.  Only REVOKER_ROLE (the multisig).
      *         After revocation, `walletOf` returns address(0) and Registry actions
      *         for this identity will revert.
      */
-    function revoke(bytes32 platformUserId) external onlyRole(ATTESTER_ROLE) {
+    function revoke(bytes32 platformUserId) external onlyRole(REVOKER_ROLE) {
         AttestationRecord storage rec = attestations[platformUserId];
         rec.revoked = true;
         rec.wallet = address(0);
         rec.pendingWallet = address(0);
         rec.pendingWalletActivatesAt = 0;
         emit AttestationRevoked(platformUserId);
+    }
+
+    /**
+     * @notice Lift a revocation (e.g. a mistaken or malicious one). DEFAULT_ADMIN_ROLE
+     *         (the timelock). The wallet stays unset: the creator attests again.
+     */
+    function unrevoke(bytes32 platformUserId) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        attestations[platformUserId].revoked = false;
+        emit AttestationUnrevoked(platformUserId);
     }
 
     // ─── Pausing ─────────────────────────────────────────────────────────────────

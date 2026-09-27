@@ -88,6 +88,19 @@ export const identityAttestorAbi = [
   },
   {
     "type": "function",
+    "name": "REVOKER_ROLE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "ROTATION_DELAY",
     "inputs": [],
     "outputs": [
@@ -519,6 +532,19 @@ export const identityAttestorAbi = [
   },
   {
     "type": "function",
+    "name": "unrevoke",
+    "inputs": [
+      {
+        "name": "platformUserId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "usedNonces",
     "inputs": [
       {
@@ -558,6 +584,19 @@ export const identityAttestorAbi = [
   {
     "type": "event",
     "name": "AttestationRevoked",
+    "inputs": [
+      {
+        "name": "platformId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "AttestationUnrevoked",
     "inputs": [
       {
         "name": "platformId",

@@ -121,6 +121,9 @@ The script executes these steps in one broadcast:
 
 After the broadcast the deployer has **no remaining privileges** on any contract.
 
+Step-by-step runbook, including the demo launchpad and the timelock operations
+(`contracts/script/TimelockOps.s.sol`): `docs/deploy-testnet.md`.
+
 ### Post-deploy checklist (via multisig + 48h timelock)
 
 1. `registry.setAdapterWhitelist(<BullcheeseAdapter>, true)` — enable Bullcheese.
@@ -153,7 +156,7 @@ forge test -vv
 forge test --gas-report --no-match-test "invariant"
 ```
 
-176 tests total: 171 unit/fuzz + 4 invariant suites + 1 Arc mainnet fork test (skipped
+195 tests total: 190 unit/fuzz + 4 invariant suites + 1 Arc mainnet fork test (skipped
 unless `ARC_MAINNET_RPC` is set).
 
 ---

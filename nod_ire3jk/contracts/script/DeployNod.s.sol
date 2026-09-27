@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {Script, console2} from "forge-std/Script.sol";
+import {VmSafe} from "forge-std/Vm.sol";
 
 import {NodTimelockController} from "../NodTimelockController.sol";
 import {FeeVaultFactory}       from "../FeeVaultFactory.sol";
@@ -9,6 +10,8 @@ import {IdentityAttestor}      from "../IdentityAttestor.sol";
 import {Registry}              from "../Registry.sol";
 import {PayoutRouter}          from "../PayoutRouter.sol";
 import {BuybackModule}         from "../BuybackModule.sol";
+import {MockLaunchpad}         from "../test-helpers/MockLaunchpad.sol";
+import {MockLaunchpadAdapter}  from "../test-helpers/MockLaunchpadAdapter.sol";
 
 /**
  * @title  DeployNod
@@ -110,6 +113,10 @@ contract DeployNod is Script {
         address fallback1  = vm.envAddress("NOD_FALLBACK1");
         uint256 depositCap = vm.envUint("NOD_DEPOSIT_CAP");
         uint16  feeBps     = uint16(vm.envUint("NOD_PROTOCOL_FEE"));
+        // Testnet only: Bullcheese is not on Arc Testnet, so a demo launchpad lets the
+        // app be exercised end to end. Its adapter still needs whitelisting through the
+        // timelock (TimelockOps.s.sol).
+        bool demoLaunchpad = vm.envOr("NOD_DEMO_LAUNCHPAD", false);
 
         _requireNonZero(multisig,  "NOD_MULTISIG");
         _requireNonZero(attester,  "NOD_ATTESTER");
@@ -215,6 +222,8 @@ contract DeployNod is Script {
         console2.log("[9a] Registry admin handed to timelock; deployer renounced");
 
         //    IdentityAttestor
+        // Revocation belongs to the multisig (fast response), not the online attester key.
+        attestor.grantRole(attestor.REVOKER_ROLE(), multisig);
         attestor.grantRole(attestor.DEFAULT_ADMIN_ROLE(), address(timelock));
         attestor.renounceRole(attestor.DEFAULT_ADMIN_ROLE(), deployer);
         console2.log("[9b] IdentityAttestor admin handed to timelock; deployer renounced");
@@ -230,9 +239,44 @@ contract DeployNod is Script {
         router.renounceRole(router.DEFAULT_ADMIN_ROLE(), deployer);
         console2.log("[9d] PayoutRouter admin handed to timelock; deployer renounced");
 
+        //  Step 10 (optional): demo launchpad for testnet 
+        MockLaunchpad demoPad;
+        MockLaunchpadAdapter demoAdapter;
+        if (demoLaunchpad) {
+            demoPad = new MockLaunchpad();
+            demoAdapter = new MockLaunchpadAdapter(address(demoPad));
+            console2.log("[10] Demo launchpad:        ", address(demoPad));
+            console2.log("[10] Demo launchpad adapter:", address(demoAdapter));
+        }
+
         vm.stopBroadcast();
 
-        //  Step 10: Summary 
+        //  Step 11: addresses for the frontend, keeper and TimelockOps 
+        string memory o = "deployments";
+        vm.serializeUint(o, "chainId", block.chainid);
+        vm.serializeUint(o, "deployBlock", block.number);
+        vm.serializeAddress(o, "usdc", ARC_USDC);
+        vm.serializeAddress(o, "timelock", address(timelock));
+        vm.serializeAddress(o, "factory", address(factory));
+        vm.serializeAddress(o, "attestor", address(attestor));
+        vm.serializeAddress(o, "buyback", address(buyback));
+        vm.serializeAddress(o, "payoutRouter", address(router));
+        vm.serializeAddress(o, "fallback", fallback1);
+        if (demoLaunchpad) {
+            vm.serializeAddress(o, "launchpad", address(demoPad));
+            vm.serializeAddress(o, "adapter", address(demoAdapter));
+        }
+        string memory json = vm.serializeAddress(o, "registry", address(registry));
+        // Only a real broadcast writes the file: a dry run's addresses were never
+        // deployed and would overwrite the committed ones.
+        if (vm.isContext(VmSafe.ForgeContext.ScriptBroadcast)) {
+            vm.writeJson(json, "./frontend/src/deployments/5042002.json");
+            console2.log("Addresses written to frontend/src/deployments/5042002.json");
+        } else {
+            console2.log("Dry run: frontend/src/deployments/5042002.json left unchanged");
+        }
+
+        //  Summary 
         console2.log("");
         console2.log("=== DEPLOYMENT COMPLETE ===");
         console2.log("NodTimelockController : ", address(timelock));
@@ -242,12 +286,12 @@ contract DeployNod is Script {
         console2.log("Registry              : ", address(registry));
         console2.log("PayoutRouter          : ", address(router));
         console2.log("");
-        console2.log("Post-deploy checklist (via multisig + 48h timelock):");
+        console2.log("Post-deploy checklist (via multisig + 48h timelock, see TimelockOps.s.sol):");
         console2.log("  1. registry.setAdapterWhitelist(<BullcheeseAdapter>, true)  [Arc mainnet: MintPlus 0x16D4c13aD2A23288AA9b9384F24084edC8CBeF41]");
         console2.log("  1b. registry.setSwapRouter(0x53BF6B0684Ec7eF91e1387Da3D1a1769bC5A6F77) + grantRole(KEEPER_ROLE, <keeper>)");
-        console2.log("  2. buyback.setSwapRouter(<UniswapV3Router>)");
+        console2.log("  2. buyback.setSwapRouter(<SwapRouter02>) + buyback.setPool(<USDC/NOD pool>) + setPoolFee to match");
         console2.log("  3. buyback.setNodToken(<NOD_TOKEN_ADDRESS>)");
-        console2.log("  4. buyback.setDisabled(false)  [after pool + router set]");
+        console2.log("  4. buyback.setDisabled(false)  [after pool + router set; setNodToken no longer enables]");
     }
 
     //  Internal helpers 

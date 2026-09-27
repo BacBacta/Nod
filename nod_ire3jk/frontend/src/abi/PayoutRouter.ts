@@ -481,27 +481,6 @@ export const payoutRouterAbi = [
   },
   {
     "type": "error",
-    "name": "NotRecipientWallet",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "splitIndex",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "caller",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "NothingToClaim",
     "inputs": [
       {
