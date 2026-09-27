@@ -480,11 +480,9 @@ contract RegistryTest is Test {
         vm.prank(recipient1);
         registry.proposeSplitsChange(launchToken, newSplits);
 
-        vm.prank(recipient1);
-        registry.signSplitsChange(launchToken);
+        _signSplits(recipient1);
 
-        vm.prank(recipient2);
-        registry.signSplitsChange(launchToken);
+        _signSplits(recipient2);
 
         // Change applied — now 1 recipient
         assertEq(registry.splitCountOf(launchToken), 1);
@@ -501,8 +499,7 @@ contract RegistryTest is Test {
         vm.prank(recipient1);
         registry.proposeSplitsChange(launchToken, newSplits);
 
-        vm.prank(recipient1);
-        registry.signSplitsChange(launchToken);
+        _signSplits(recipient1);
 
         // Only 1 of 2 signed — still 2 recipients
         assertEq(registry.splitCountOf(launchToken), 2);
@@ -517,14 +514,14 @@ contract RegistryTest is Test {
         vm.prank(recipient1);
         registry.proposeSplitsChange(launchToken, newSplits);
 
-        vm.prank(recipient1);
-        registry.signSplitsChange(launchToken);
+        _signSplits(recipient1);
 
+        bytes32 pid = registry.splitChangeIdOf(launchToken);
         vm.prank(recipient1);
         vm.expectRevert(
             abi.encodeWithSelector(Registry.SplitChangeAlreadySigned.selector, launchToken, recipient1)
         );
-        registry.signSplitsChange(launchToken);
+        registry.signSplitsChange(launchToken, pid);
     }
 
     // ─── setRedirect ────────────────────────────────────────────────────────────
@@ -928,6 +925,13 @@ contract RegistryTest is Test {
         assertEq(vault.claimable(recipient1), cap * 9 / 10);
         assertEq(usdc.balanceOf(treasury) + usdc.balanceOf(buyback), cap / 10);
         assertEq(usdc.balanceOf(address(vault)), cap * 9 / 10 + 10e6); // claims + excess
+    }
+
+    /// @dev Sign the pending splits change as `who` (reads the id before the prank).
+    function _signSplits(address who) internal {
+        bytes32 pid = registry.splitChangeIdOf(launchToken);
+        vm.prank(who);
+        registry.signSplitsChange(launchToken, pid);
     }
 
     // ─── Helper ─────────────────────────────────────────────────────────────────
