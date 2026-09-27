@@ -6,26 +6,8 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-/**
- * @title  IUniswapV3SwapRouter (minimal)
- * @notice Minimal interface for Uniswap V3 exactInputSingle.
- */
-interface IUniswapV3SwapRouter {
-    struct ExactInputSingleParams {
-        address tokenIn;
-        address tokenOut;
-        uint24  fee;
-        address recipient;
-        uint256 deadline;
-        uint256 amountIn;
-        uint256 amountOutMinimum;
-        uint160 sqrtPriceLimitX96;
-    }
-
-    function exactInputSingle(ExactInputSingleParams calldata params)
-        external
-        returns (uint256 amountOut);
-}
+import {ISwapRouter02, IUniswapV3PoolMinimal} from "./external/IUniswapV3.sol";
+import {TwapQuote} from "./libraries/TwapQuote.sol";
 
 /**
  * @title  BuybackModule
@@ -44,10 +26,11 @@ interface IUniswapV3SwapRouter {
  *         execution.
  *
  *         ── Slippage & deadline ──────────────────────────────────────────────────────
- *         The keeper passes `amountIn` and `minAmountOut` (slippage guard) plus a
- *         `deadline` for the swap.  `minAmountOut` must exceed `amountIn *
- *         (10_000 - maxSlippageBps) / 10_000` or the call reverts — this is a
- *         second-level protection on top of Uniswap's own slippage check.
+ *         The keeper passes `amountIn`, `minAmountOut` and a `deadline`.
+ *         `minAmountOut` must be at least the USDC/$NOD pool's 10-minute TWAP value of
+ *         `amountIn` minus `maxSlippageBps`, so a bad quote or a manipulated spot price
+ *         cannot sell the USDC cheaply. Swaps go through Uniswap SwapRouter02 (Arc's
+ *         router), whose parameters have no deadline: it is checked here.
  *
  *         ── Disable switch ───────────────────────────────────────────────────────────
  *         `disabled = true` stops only the buyback swap execution.  All other
@@ -72,6 +55,9 @@ contract BuybackModule is AccessControl, ReentrancyGuard {
     error NotFromTimelock();
     error NativeNotAccepted();
     error AmountZero();
+    error PoolNotSet();
+    error PoolMismatch(address pool);
+    error DeadlinePassed(uint256 deadline);
 
     // ─── Events ──────────────────────────────────────────────────────────────────
 
@@ -87,6 +73,7 @@ contract BuybackModule is AccessControl, ReentrancyGuard {
     event ScheduleIntervalSet(uint256 interval);
     event MaxSlippageSet(uint256 maxSlippageBps);
     event PoolFeeSet(uint24 poolFee);
+    event PoolSet(address indexed pool);
 
     // ─── Roles ───────────────────────────────────────────────────────────────────
 
@@ -99,6 +86,9 @@ contract BuybackModule is AccessControl, ReentrancyGuard {
 
     /// @notice Maximum allowed slippage bps (50% — hard upper bound as a sanity check).
     uint256 public constant MAX_SLIPPAGE_CAP = 5000;
+
+    /// @notice TWAP window used to bound buybacks.
+    uint32 public constant TWAP_WINDOW = 10 minutes;
 
     // ─── Immutables ──────────────────────────────────────────────────────────────
 
@@ -115,6 +105,9 @@ contract BuybackModule is AccessControl, ReentrancyGuard {
 
     /// @notice Uniswap V3 pool fee tier for the USDC/$NOD pool.
     uint24  public poolFee;
+
+    /// @notice USDC/$NOD Uniswap v3 pool used for the TWAP bound (and its fee tier).
+    address public pool;
 
     /// @notice Maximum slippage the keeper is allowed to pass (bps).
     uint256 public maxSlippageBps;
@@ -201,11 +194,19 @@ contract BuybackModule is AccessControl, ReentrancyGuard {
         if (amountIn == 0) revert AmountZero();
         if (block.timestamp < nextAllowedAt) revert TooEarlyForBuyback(nextAllowedAt);
 
+        if (block.timestamp > deadline) revert DeadlinePassed(deadline);
+        address p = pool;
+        if (p == address(0)) revert PoolNotSet();
+        if (IUniswapV3PoolMinimal(p).fee() != poolFee) revert PoolMismatch(p);
+
         uint256 balance = USDC.balanceOf(address(this));
         if (balance < amountIn) revert InsufficientUsdcBalance(balance, amountIn);
 
-        // Verify keeper's minAmountOut satisfies our max-slippage constraint
-        uint256 minRequired = amountIn * (10_000 - maxSlippageBps) / 10_000;
+        // minAmountOut is in $NOD units: bound it by the TWAP value of amountIn in $NOD.
+        uint256 twapOut = TwapQuote.quote(
+            IUniswapV3PoolMinimal(p), TWAP_WINDOW, address(USDC), nodToken, uint128(amountIn)
+        );
+        uint256 minRequired = twapOut * (10_000 - maxSlippageBps) / 10_000;
         if (minAmountOut < minRequired) revert SlippageExceedsMax(minRequired, minAmountOut);
 
         // Effects before interaction
@@ -215,13 +216,12 @@ contract BuybackModule is AccessControl, ReentrancyGuard {
         address router = swapRouter;
         USDC.forceApprove(router, amountIn);
 
-        uint256 nodReceived = IUniswapV3SwapRouter(router).exactInputSingle(
-            IUniswapV3SwapRouter.ExactInputSingleParams({
+        uint256 nodReceived = ISwapRouter02(router).exactInputSingle(
+            ISwapRouter02.ExactInputSingleParams({
                 tokenIn:           address(USDC),
                 tokenOut:          nodToken,
                 fee:               poolFee,
                 recipient:         DEAD_ADDRESS,
-                deadline:          deadline,
                 amountIn:          amountIn,
                 amountOutMinimum:  minAmountOut,
                 sqrtPriceLimitX96: 0
@@ -238,19 +238,23 @@ contract BuybackModule is AccessControl, ReentrancyGuard {
 
     /**
      * @notice Set the $NOD token address.  Via timelock.  Non-zero only.
-     *         Automatically enables the buyback (sets `disabled = false`) if it was
-     *         disabled solely because nodToken was unset.
+     *         Does not enable buybacks: that is an explicit `setDisabled(false)`, so an
+     *         earlier `setDisabled(true)` is never undone silently.
      */
     function setNodToken(address _nodToken) external onlyTimelock {
         if (_nodToken == address(0)) revert ZeroAddress();
         nodToken = _nodToken;
-        // Re-enable buybacks now that the token is known
-        disabled = false;
         emit NodeTokenSet(_nodToken);
-        emit BuybackDisabledSet(false);
     }
 
-    /// @notice Update the Uniswap V3 router.  Via timelock.
+    /// @notice Set the USDC/$NOD pool used for the TWAP bound.  Via timelock.
+    function setPool(address _pool) external onlyTimelock {
+        if (_pool == address(0)) revert ZeroAddress();
+        pool = _pool;
+        emit PoolSet(_pool);
+    }
+
+    /// @notice Update the Uniswap router (SwapRouter02 interface).  Via timelock.
     function setSwapRouter(address _router) external onlyTimelock {
         if (_router == address(0)) revert ZeroAddress();
         swapRouter = _router;

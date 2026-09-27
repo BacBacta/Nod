@@ -222,6 +222,8 @@ contract DeployNod is Script {
         console2.log("[9a] Registry admin handed to timelock; deployer renounced");
 
         //    IdentityAttestor
+        // Revocation belongs to the multisig (fast response), not the online attester key.
+        attestor.grantRole(attestor.REVOKER_ROLE(), multisig);
         attestor.grantRole(attestor.DEFAULT_ADMIN_ROLE(), address(timelock));
         attestor.renounceRole(attestor.DEFAULT_ADMIN_ROLE(), deployer);
         console2.log("[9b] IdentityAttestor admin handed to timelock; deployer renounced");
@@ -287,9 +289,9 @@ contract DeployNod is Script {
         console2.log("Post-deploy checklist (via multisig + 48h timelock, see TimelockOps.s.sol):");
         console2.log("  1. registry.setAdapterWhitelist(<BullcheeseAdapter>, true)  [Arc mainnet: MintPlus 0x16D4c13aD2A23288AA9b9384F24084edC8CBeF41]");
         console2.log("  1b. registry.setSwapRouter(0x53BF6B0684Ec7eF91e1387Da3D1a1769bC5A6F77) + grantRole(KEEPER_ROLE, <keeper>)");
-        console2.log("  2. buyback.setSwapRouter(<UniswapV3Router>)");
+        console2.log("  2. buyback.setSwapRouter(<SwapRouter02>) + buyback.setPool(<USDC/NOD pool>) + setPoolFee to match");
         console2.log("  3. buyback.setNodToken(<NOD_TOKEN_ADDRESS>)");
-        console2.log("  4. buyback.setDisabled(false)  [after pool + router set]");
+        console2.log("  4. buyback.setDisabled(false)  [after pool + router set; setNodToken no longer enables]");
     }
 
     //  Internal helpers 

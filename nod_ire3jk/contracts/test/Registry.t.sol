@@ -920,11 +920,17 @@ contract RegistryTest is Test {
         uint256 cap = vault.depositCap();
         usdc.mint(address(vault), cap + 10e6);
         registry.distributeIncoming(launchToken); // must not revert
-        registry.distributeIncoming(launchToken);
 
+        // Only the cap is counted: the 10 USDC excess waits in the vault.
         assertEq(vault.claimable(recipient1), cap * 9 / 10);
         assertEq(usdc.balanceOf(treasury) + usdc.balanceOf(buyback), cap / 10);
-        assertEq(usdc.balanceOf(address(vault)), cap * 9 / 10 + 10e6); // claims + excess
+        assertEq(usdc.balanceOf(address(vault)), cap * 9 / 10 + 10e6);
+
+        // The cap limits funds held, not lifetime inflow: the protocol fee paid out
+        // freed room, so the next distribution counts the excess.
+        registry.distributeIncoming(launchToken);
+        assertEq(vault.claimable(recipient1), cap * 9 / 10 + 9e6);
+        assertEq(usdc.balanceOf(address(vault)), vault.claimable(recipient1));
     }
 
     /// @dev Sign the pending splits change as `who` (reads the id before the prank).

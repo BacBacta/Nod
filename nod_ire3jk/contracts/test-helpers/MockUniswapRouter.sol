@@ -6,7 +6,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 
 /**
  * @title MockUniswapRouter
- * @notice Stub Uniswap V3 router for testing BuybackModule.
+ * @notice Stub SwapRouter02 (no deadline field) for testing BuybackModule.
  */
 contract MockUniswapRouter {
     using SafeERC20 for IERC20;
@@ -16,7 +16,6 @@ contract MockUniswapRouter {
         address tokenOut;
         uint24  fee;
         address recipient;
-        uint256 deadline;
         uint256 amountIn;
         uint256 amountOutMinimum;
         uint160 sqrtPriceLimitX96;

@@ -76,9 +76,8 @@ contract FeeVaultFactoryTest is Test {
         assertEq(usedSalt, saltPredicted);
     }
 
-    function test_DeployVault_SaltKeccakOfDeployerAndNonce() public {
-        uint256 nonce = factory.deployerNonce(deployer);
-        bytes32 expected = keccak256(abi.encodePacked(deployer, nonce));
+    function test_DeployVault_SaltKeccakOfDeployerAndToken() public {
+        bytes32 expected = keccak256(abi.encodePacked(deployer, token));
 
         vm.prank(registry);
         (, bytes32 usedSalt) = factory.deployVault(deployer, token);
@@ -101,7 +100,7 @@ contract FeeVaultFactoryTest is Test {
 
     function test_DeployVault_EmitsEvent() public {
         uint256 nonce = factory.deployerNonce(deployer);
-        bytes32 salt  = keccak256(abi.encodePacked(deployer, nonce));
+        bytes32 salt  = keccak256(abi.encodePacked(deployer, token));
         (address predicted,) = factory.predictVaultAddress(deployer, token);
 
         vm.expectEmit(true, true, true, true, address(factory));

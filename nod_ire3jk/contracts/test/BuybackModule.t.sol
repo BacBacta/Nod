@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {BuybackModule} from "../BuybackModule.sol";
 import {MockERC20}     from "../test-helpers/MockERC20.sol";
 import {MockUniswapRouter} from "../test-helpers/MockUniswapRouter.sol";
+import {MockV3Pool} from "../test-helpers/MockBullcheese.sol";
 
 contract BuybackModuleTest is Test {
     BuybackModule      internal module;
@@ -20,6 +21,19 @@ contract BuybackModuleTest is Test {
     uint24  internal constant POOL_FEE  = 3000;
     uint256 internal constant SLIPPAGE  = 100; // 1%
     uint256 internal constant INTERVAL  = 7 days;
+
+    MockV3Pool internal pool;
+
+    /// @dev Production setup: $NOD token, TWAP pool, then an explicit enable.
+    function _enable() internal {
+        pool = new MockV3Pool(address(usdc), address(nodToken)); // TWAP tick 0: 1 raw USDC = 1 raw NOD
+        pool.setFee(POOL_FEE);
+        vm.startPrank(timelockAddr);
+        module.setNodToken(address(nodToken));
+        module.setPool(address(pool));
+        module.setDisabled(false);
+        vm.stopPrank();
+    }
 
     function setUp() public {
         usdc     = new MockERC20("Mock USDC", "mUSDC", 6);
@@ -63,8 +77,7 @@ contract BuybackModuleTest is Test {
 
     function test_ExecuteBuyback_TooEarlyReverts() public {
         // Set nodToken via timelock (also re-enables)
-        vm.prank(timelockAddr);
-        module.setNodToken(address(nodToken));
+        _enable();
 
         // First call succeeds
         usdc.mint(address(module), 1000e6);
@@ -84,8 +97,7 @@ contract BuybackModuleTest is Test {
     // ─── executeBuyback — happy path ─────────────────────────────────────────────
 
     function test_ExecuteBuyback_HappyPath() public {
-        vm.prank(timelockAddr);
-        module.setNodToken(address(nodToken));
+        _enable();
 
         uint256 amountIn = 100e6;
         usdc.mint(address(module), amountIn);
@@ -105,8 +117,7 @@ contract BuybackModuleTest is Test {
     }
 
     function test_ExecuteBuyback_NextAllowedAtUpdated() public {
-        vm.prank(timelockAddr);
-        module.setNodToken(address(nodToken));
+        _enable();
 
         usdc.mint(address(module), 100e6);
         nodToken.mint(address(router), 1000e18);
@@ -119,8 +130,7 @@ contract BuybackModuleTest is Test {
     }
 
     function test_ExecuteBuyback_OnlyKeeper() public {
-        vm.prank(timelockAddr);
-        module.setNodToken(address(nodToken));
+        _enable();
 
         usdc.mint(address(module), 100e6);
         vm.prank(alice);
@@ -129,8 +139,7 @@ contract BuybackModuleTest is Test {
     }
 
     function test_ExecuteBuyback_SlippageTooLowReverts() public {
-        vm.prank(timelockAddr);
-        module.setNodToken(address(nodToken));
+        _enable();
 
         usdc.mint(address(module), 100e6);
         nodToken.mint(address(router), 1000e18);
@@ -142,8 +151,7 @@ contract BuybackModuleTest is Test {
     }
 
     function test_ExecuteBuyback_InsufficientBalanceReverts() public {
-        vm.prank(timelockAddr);
-        module.setNodToken(address(nodToken));
+        _enable();
 
         // No USDC in module
         uint256 minOut = 100e6 * (10_000 - SLIPPAGE) / 10_000;
@@ -196,10 +204,19 @@ contract BuybackModuleTest is Test {
         module.setNodToken(address(0));
     }
 
-    function test_SetNodToken_EnablesBuyback() public {
+    function test_SetNodToken_DoesNotEnableBuyback() public {
         vm.prank(timelockAddr);
         module.setNodToken(address(nodToken));
-        assertFalse(module.disabled());
+        assertTrue(module.disabled()); // enabling is an explicit setDisabled(false)
+    }
+
+    function test_SetNodToken_KeepsExplicitDisable() public {
+        _enable();
+        vm.prank(timelockAddr);
+        module.setDisabled(true);
+        vm.prank(timelockAddr);
+        module.setNodToken(address(nodToken));
+        assertTrue(module.disabled());
     }
 
     function test_SetMaxSlippage_AboveCap5000Reverts() public {

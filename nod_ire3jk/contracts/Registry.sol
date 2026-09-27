@@ -867,6 +867,12 @@ contract Registry is AccessControl, Pausable, ReentrancyGuard {
         emit TreasuryUpdated(old, newTreasury);
     }
 
+    /// @notice Default deposit cap for vaults deployed from now on (0 = uncapped). Via timelock.
+    ///         Does not change predicted vault addresses.
+    function setDefaultDepositCap(uint256 newCap) external onlyTimelock {
+        factory.setDefaultDepositCap(newCap);
+    }
+
     /// @notice Set the Uniswap router used for token-fee swaps (0 disables).  Via timelock.
     function setSwapRouter(address newRouter) external onlyTimelock {
         address old = swapRouter;

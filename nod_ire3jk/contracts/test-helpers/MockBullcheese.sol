@@ -65,6 +65,7 @@ contract MockV3Pool {
     }
 
     function setTwapTick(int24 t) external { twapTick = t; }
+    function setFee(uint24 f) external { fee = f; }
     function setTooYoung(bool v) external { tooYoung = v; }
 
     function observe(uint32[] calldata secondsAgos)

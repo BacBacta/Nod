@@ -22,11 +22,11 @@ contract FeeVaultTest is Test {
 
         // Deploy vault from factory address
         vm.prank(factory);
-        vault = new FeeVault(address(usdc), factory, token, keccak256("salt"), CAP);
+        vault = new FeeVault(address(usdc), factory, token, keccak256("salt"));
 
         // Wire registry
         vm.prank(factory);
-        vault.setRegistry(registry);
+        vault.setRegistry(registry, CAP);
     }
 
     // ─── setRegistry ────────────────────────────────────────────────────────────
@@ -34,26 +34,26 @@ contract FeeVaultTest is Test {
     function test_SetRegistry_OnlyFactory() public {
         // Deploy fresh vault without registry
         vm.prank(factory);
-        FeeVault v2 = new FeeVault(address(usdc), factory, token, keccak256("salt2"), 0);
+        FeeVault v2 = new FeeVault(address(usdc), factory, token, keccak256("salt2"));
 
         vm.prank(alice);
         vm.expectRevert(FeeVault.NotRegistry.selector);
-        v2.setRegistry(registry);
+        v2.setRegistry(registry, 0);
     }
 
     function test_SetRegistry_OneTimeOnly() public {
         // Already set in setUp — try again
         vm.prank(factory);
         vm.expectRevert(FeeVault.NotRegistry.selector);
-        vault.setRegistry(alice);
+        vault.setRegistry(alice, 0);
     }
 
     function test_SetRegistry_ZeroAddress() public {
         vm.prank(factory);
-        FeeVault v2 = new FeeVault(address(usdc), factory, token, keccak256("salt3"), 0);
+        FeeVault v2 = new FeeVault(address(usdc), factory, token, keccak256("salt3"));
         vm.prank(factory);
         vm.expectRevert(FeeVault.ZeroAddress.selector);
-        v2.setRegistry(address(0));
+        v2.setRegistry(address(0), 0);
     }
 
     // ─── notifyReceived ──────────────────────────────────────────────────────────
@@ -150,9 +150,9 @@ contract FeeVaultTest is Test {
     function test_DepositCap_ZeroMeansNoCap() public {
         // Deploy a vault with cap=0
         vm.prank(factory);
-        FeeVault uncapped = new FeeVault(address(usdc), factory, token, keccak256("uncapped"), 0);
+        FeeVault uncapped = new FeeVault(address(usdc), factory, token, keccak256("uncapped"));
         vm.prank(factory);
-        uncapped.setRegistry(registry);
+        uncapped.setRegistry(registry, 0);
 
         uint256 huge = 1e15; // very large
         usdc.mint(address(uncapped), huge);

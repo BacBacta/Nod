@@ -12,6 +12,7 @@ contract IdentityAttestorTest is Test {
     uint256 internal attesterKey;
 
     address internal pauser  = makeAddr("pauser");
+    address internal revoker = makeAddr("revoker");
     address internal alice   = makeAddr("alice");
     address internal bob     = makeAddr("bob");
 
@@ -21,6 +22,9 @@ contract IdentityAttestorTest is Test {
     function setUp() public {
         (attesterAddr, attesterKey) = makeAddrAndKey("attester");
         attestor = new IdentityAttestor(admin, attesterAddr, pauser);
+        bytes32 revokerRole = attestor.REVOKER_ROLE();
+        vm.prank(admin);
+        attestor.grantRole(revokerRole, revoker);
     }
 
     // ─── Internal helper: create a valid EIP-712 attestation signature ───────────
@@ -194,7 +198,7 @@ contract IdentityAttestorTest is Test {
 
     function test_Revoke_SetsRevoked() public {
         _attest(PLATFORM, PLATFORM_USER, alice, keccak256("nonce1"));
-        vm.prank(attesterAddr);
+        vm.prank(revoker);
         attestor.revoke(PLATFORM_USER);
 
         assertFalse(attestor.isVerifiedWallet(PLATFORM_USER, alice));
@@ -210,7 +214,7 @@ contract IdentityAttestorTest is Test {
 
     function test_Attest_RevokedIdentityReverts() public {
         _attest(PLATFORM, PLATFORM_USER, alice, keccak256("nonce1"));
-        vm.prank(attesterAddr);
+        vm.prank(revoker);
         attestor.revoke(PLATFORM_USER);
 
         bytes32 nonce  = keccak256("nonce2");
@@ -225,7 +229,7 @@ contract IdentityAttestorTest is Test {
 
     function test_InitiateRotation_RevokedIdentityReverts() public {
         _attest(PLATFORM, PLATFORM_USER, alice, keccak256("nonce1"));
-        vm.prank(attesterAddr);
+        vm.prank(revoker);
         attestor.revoke(PLATFORM_USER);
 
         bytes32 nonce  = keccak256("nonce2");
