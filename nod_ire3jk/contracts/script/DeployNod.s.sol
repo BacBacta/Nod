@@ -117,6 +117,11 @@ contract DeployNod is Script {
         // app be exercised end to end. Its adapter still needs whitelisting through the
         // timelock (TimelockOps.s.sol).
         bool demoLaunchpad = vm.envOr("NOD_DEMO_LAUNCHPAD", false);
+        // Testnet-only convenience: override the timelock's minimum delay for fast
+        // iteration (e.g. NOD_TIMELOCK_DELAY=60). Defaults to the production 48h delay.
+        // This script only ever runs on Arc Testnet (chain-gated below), so a short
+        // delay here can never apply to a mainnet deployment.
+        uint256 timelockDelay = vm.envOr("NOD_TIMELOCK_DELAY", uint256(48 hours));
 
         _requireNonZero(multisig,  "NOD_MULTISIG");
         _requireNonZero(attester,  "NOD_ATTESTER");
@@ -137,9 +142,10 @@ contract DeployNod is Script {
         console2.log("Fallback1: ", fallback1);
         console2.log("DepCap:    ", depositCap);
         console2.log("FeeBps:    ", feeBps);
+        console2.log("Delay(s):  ", timelockDelay);
 
-        //  Step 1: NodTimelockController 
-        NodTimelockController timelock = new NodTimelockController(multisig);
+        //  Step 1: NodTimelockController
+        NodTimelockController timelock = new NodTimelockController(multisig, timelockDelay);
         console2.log("[1] NodTimelockController:", address(timelock));
 
         //  Step 2: FeeVaultFactory 
